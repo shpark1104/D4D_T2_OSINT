@@ -38,6 +38,7 @@ const accessKey = process.env.STEALTHMOLE_ACCESS_KEY || "";
 const secretKey = process.env.STEALTHMOLE_SECRET_KEY || "";
 const mockFlag = String(process.env.STEALTHMOLE_MOCK || "").toLowerCase();
 const openaiKey = process.env.OPENAI_API_KEY || "";
+const walletMockFlag = String(process.env.WALLET_INTEL_MOCK || "").toLowerCase();
 
 module.exports = {
   port: Number(process.env.PORT || 3000),
@@ -54,6 +55,17 @@ module.exports = {
     apiKey: openaiKey,
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
     enabled: Boolean(openaiKey)
+  },
+  walletIntel: {
+    mockMode: walletMockFlag === "true" || walletMockFlag === "",
+    etherscanApiKey: process.env.ETHERSCAN_API_KEY || "",
+    etherscanBaseUrl: process.env.ETHERSCAN_BASE_URL || "https://api.etherscan.io/v2/api",
+    etherscanChainId: process.env.ETHERSCAN_CHAIN_ID || "1",
+    blockchainBaseUrl: process.env.BLOCKCHAIN_COM_BASE_URL || "https://blockchain.info",
+    maxDepth: Number(process.env.WALLET_INTEL_MAX_DEPTH || 3),
+    txLimit: Number(process.env.WALLET_INTEL_TX_LIMIT || 25),
+    maxFanout: Number(process.env.WALLET_INTEL_MAX_FANOUT || 8),
+    maxNodes: Number(process.env.WALLET_INTEL_MAX_NODES || 80)
   },
   limits: {
     jsonBytes: 12 * 1024 * 1024,

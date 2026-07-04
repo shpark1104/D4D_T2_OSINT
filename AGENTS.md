@@ -30,6 +30,8 @@ graph visualization/dashboard are intentionally out of scope for now):
 - Document viewer with IOC highlighting + click-to-search, drag-to-search,
   and optional OpenAI-based semantic highlighting (`server/semanticHighlighter.js`,
   M5a/M5b), cached per document.
+- Wallet intelligence submodule for cryptocurrency address transaction lookup,
+  progressive 1-hop graph expansion, and relationship visualization.
 - Entity-resolution / knowledge-graph area (M6/M7) is not implemented yet.
 
 ## Non-Goals For This Base
@@ -95,6 +97,18 @@ Module boundaries in place:
 - `server/stealthmoleClient.js`: external CTI lookup only.
 
 Do not mix LLM prompts, StealthMole API calls, and UI-specific formatting in one file.
+
+## Wallet Intel Submodule Notes
+
+Wallet investigation lives under `submodules/wallet-intel/`.
+
+- Keep provider calls, address normalization, graph traversal, and anomaly-rule work inside the submodule.
+- Main server integration should stay thin. Use `/api/wallet/analyze` as the primary boundary.
+- Current provider targets are Etherscan API V2 for Ethereum/EVM and Blockchain.com Data API for Bitcoin.
+- Keep `WALLET_INTEL_MOCK=true` by default for sharing and demos.
+- Cap depth, fan-out, transaction count, and node count to avoid runaway external API usage.
+- Formal anomaly definitions are pending. Until then, return structural observations rather than claiming suspiciousness.
+- The current frontend demo starts with one selected IOC wallet and reveals adjacent 1-hop nodes only when a wallet node is clicked.
 
 ## Frontend Direction
 

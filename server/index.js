@@ -1,12 +1,14 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { port, stealthmole, llm } = require("./config");
+const config = require("./config");
+const { port, stealthmole, llm } = config;
 const { extractIocsFromText, mergeIocs } = require("./iocExtractor");
 const { extractIocsWithLlm } = require("./llmIocExtractor");
 const { getSemanticHighlights } = require("./semanticHighlighter");
 const stealthmoleClient = require("./stealthmoleClient");
 const sessionsStore = require("./sessions");
+const { analyzeWallet } = require("../submodules/wallet-intel");
 
 const PUBLIC_DIR = path.join(process.cwd(), "public");
 const MAX_BATCH_QUERY_IOCS = 20;
@@ -97,6 +99,12 @@ async function handleApi(req, res, pathname, query) {
   if (req.method === "GET" && pathname === "/api/quotas") {
     const quotas = await stealthmoleClient.getQuotas();
     return sendJson(res, 200, quotas);
+  }
+
+  if (req.method === "POST" && pathname === "/api/wallet/analyze") {
+    const body = await readJson(req);
+    const result = await analyzeWallet(body, config);
+    return sendJson(res, 200, result);
   }
 
   if (req.method === "POST" && pathname === "/api/sessions") {

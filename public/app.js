@@ -22,7 +22,10 @@ const state = {
   semanticHighlights: null,
   highlightMode: "ioc",
   filters: { module: "", sort: "recent" },
-  stagedIocs: []
+  stagedIocs: [],
+  walletAnalysis: null,
+  selectedWallet: null,
+  expandedWallets: new Set()
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -37,6 +40,40 @@ function escapeHtml(value) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isWalletIocType(type) {
+  return type === "btc_address" || type === "eth_address" || type === "wallet_btc" || type === "wallet_eth";
+}
+
+function shortAddress(address) {
+  const value = String(address || "");
+  return value.length > 18 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
+}
+
+function edgeAmount(edge, network) {
+  const raw = edge.valueNative || edge.valueBtc || edge.valueEth || "0";
+  return `${raw} ${network === "bitcoin" ? "BTC" : "ETH"}`;
+}
+
+function edgeLabel(edge, network) {
+  const count = edge.count || 1;
+  return `${count} tx / ${edgeAmount(edge, network)}`;
+}
+
+function edgeTime(edge) {
+  const value = edge.timestamp || edge.block_time || edge.time;
+  if (!value) return "";
+  if (typeof value === "number") return new Date(value * 1000).toLocaleString("ko-KR");
+  return String(value);
+}
+
+function transactionMonth(tx) {
+  const value = tx.timestamp || tx.block_time || tx.time;
+  if (!value) return "unknown";
+  const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
 // Lightweight term-based highlight for search-result snippets (M4). The full
@@ -84,7 +121,10 @@ function renderIocs() {
       event.dataTransfer.setData("application/json", JSON.stringify({ type: ioc.type, value: ioc.value }));
       event.dataTransfer.effectAllowed = "copy";
     });
-    chip.addEventListener("click", () => runSearch(ioc.value, ioc.type));
+    chip.addEventListener("click", () => {
+      if (isWalletIocType(ioc.type)) analyzeWallet(ioc.value);
+      else runSearch(ioc.value, ioc.type);
+    });
     list.appendChild(chip);
   }
 }
@@ -398,6 +438,343 @@ async function setHighlightMode(mode) {
   }
 }
 
+// --- Wallet graph demo/submodule UI ---
+
+function demoWalletAnalysis() {
+  const data = window.WALLET_DEMO_DATA;
+  if (data) {
+    const copy = typeof structuredClone === "function" ? structuredClone(data) : JSON.parse(JSON.stringify(data));
+    copy.observations = (copy.observations || []).map((item) =>
+      item.type === "graph_view"
+        ? {
+            ...item,
+            title: "Progressive 1-hop expansion",
+            detail: "Initial view shows only the selected IOC wallet. Clicking a wallet reveals only its adjacent 1-hop wallets and edges."
+          }
+        : item
+    );
+    return copy;
+  }
+
+  const seed = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT";
+  return {
+    address: seed,
+    network: "bitcoin",
+    depth: 2,
+    mock: true,
+    summary: { txCount: 1172, source: "Blockstream address stats" },
+    graph: { nodes: [{ id: seed, label: shortAddress(seed), network: "bitcoin", depth: 0, role: "seed", txCount: 1172 }], edges: [] },
+    layers: [{ depth: 0, addresses: [seed] }],
+    transactions: [],
+    observations: [],
+    provider: "demo"
+  };
+}
+
+function walletNodeDepth(analysis, address) {
+  const node = (analysis.graph.nodes || []).find((item) => item.id === address);
+  return node ? Number(node.depth || 0) : 0;
+}
+
+function getVisibleWalletGraph(analysis) {
+  const maxDepth = Number($("#walletDepth").value || analysis.depth || 2);
+  const sourceNodes = analysis.graph.nodes || [];
+  const sourceEdges = analysis.graph.edges || [];
+  const expanded = state.expandedWallets instanceof Set ? state.expandedWallets : new Set();
+  const visibleIds = new Set([analysis.address]);
+  const visibleEdgeIds = new Set();
+
+  if (state.selectedWallet && walletNodeDepth(analysis, state.selectedWallet) <= maxDepth) {
+    visibleIds.add(state.selectedWallet);
+  }
+
+  expanded.forEach((address) => {
+    if (walletNodeDepth(analysis, address) > maxDepth) return;
+    visibleIds.add(address);
+    sourceEdges.forEach((edge) => {
+      if (edge.source !== address && edge.target !== address) return;
+      const sourceDepth = walletNodeDepth(analysis, edge.source);
+      const targetDepth = walletNodeDepth(analysis, edge.target);
+      if (sourceDepth > maxDepth || targetDepth > maxDepth) return;
+      visibleIds.add(edge.source);
+      visibleIds.add(edge.target);
+      visibleEdgeIds.add(edge.id || `${edge.source}->${edge.target}`);
+    });
+  });
+
+  const nodes = sourceNodes.filter((node) => visibleIds.has(node.id));
+  const visibleNodeIds = new Set(nodes.map((node) => node.id));
+  const edges = sourceEdges.filter((edge) => {
+    const edgeId = edge.id || `${edge.source}->${edge.target}`;
+    return visibleEdgeIds.has(edgeId) && visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target);
+  });
+  const hiddenNeighborCounts = new Map();
+
+  nodes.forEach((node) => {
+    const hidden = sourceEdges.filter((edge) => {
+      if (edge.source !== node.id && edge.target !== node.id) return false;
+      const other = edge.source === node.id ? edge.target : edge.source;
+      const otherDepth = walletNodeDepth(analysis, other);
+      return otherDepth <= maxDepth && !visibleNodeIds.has(other);
+    }).length;
+    hiddenNeighborCounts.set(node.id, hidden);
+  });
+
+  return { nodes, edges, hiddenNeighborCounts, maxDepth };
+}
+
+function renderWalletGraphSvg(analysis) {
+  const graphView = getVisibleWalletGraph(analysis);
+  const { nodes, edges, hiddenNeighborCounts } = graphView;
+  const maxDepth = Math.max(2, graphView.maxDepth, ...nodes.map((node) => node.depth || 0));
+  const width = 760;
+  const columnGap = width / (maxDepth + 1);
+  const grouped = new Map();
+
+  nodes.forEach((node) => {
+    const depth = node.depth || 0;
+    if (!grouped.has(depth)) grouped.set(depth, []);
+    grouped.get(depth).push(node);
+  });
+
+  const maxRows = Math.max(1, ...Array.from(grouped.values()).map((items) => items.length));
+  const height = Math.max(280, maxRows * 92 + 88);
+  const positions = new Map();
+
+  for (let depth = 0; depth <= maxDepth; depth += 1) {
+    const items = grouped.get(depth) || [];
+    const x = Math.round(columnGap * depth + columnGap / 2);
+    items.forEach((node, index) => {
+      const y = Math.round(((index + 1) * height) / (items.length + 1));
+      positions.set(node.id, { x, y, node });
+    });
+  }
+
+  const edgeLines = edges
+    .map((edge) => {
+      const source = positions.get(edge.source);
+      const target = positions.get(edge.target);
+      if (!source || !target) return "";
+      const midX = Math.round((source.x + target.x) / 2);
+      const path = `M ${source.x + 18} ${source.y} C ${midX} ${source.y}, ${midX} ${target.y}, ${target.x - 18} ${target.y}`;
+      const labelX = Math.round((source.x + target.x) / 2);
+      const labelY = Math.round((source.y + target.y) / 2) - 6;
+      return `
+        <path class="wallet-link" d="${path}" marker-end="url(#walletArrow)" />
+        <text class="wallet-link-label" x="${labelX}" y="${labelY}">${escapeHtml(edgeLabel(edge, analysis.network))}</text>
+      `;
+    })
+    .join("");
+
+  const nodeCircles = nodes
+    .map((node) => {
+      const position = positions.get(node.id);
+      if (!position) return "";
+      const selected = state.selectedWallet === node.id ? " selected" : "";
+      const className = `${node.role === "seed" ? "wallet-dot seed" : "wallet-dot"}${selected}`;
+      const hiddenCount = hiddenNeighborCounts.get(node.id) || 0;
+      return `
+        <g class="wallet-svg-node" data-wallet="${escapeHtml(node.id)}" tabindex="0" role="button">
+          <circle class="${className}" cx="${position.x}" cy="${position.y}" r="18"></circle>
+          ${hiddenCount ? `<text class="wallet-expand-count" x="${position.x + 21}" y="${position.y - 18}">+${hiddenCount}</text>` : ""}
+          <text class="wallet-svg-label" x="${position.x}" y="${position.y + 34}">${escapeHtml(node.label || shortAddress(node.id))}</text>
+          <text class="wallet-svg-count" x="${position.x}" y="${position.y + 50}">${escapeHtml(String(node.txCount || ""))}${node.txCount ? " tx" : ""}</text>
+        </g>
+      `;
+    })
+    .join("");
+
+  const depthLabels = Array.from({ length: maxDepth + 1 }, (_, depth) => {
+    const x = Math.round(columnGap * depth + columnGap / 2);
+    return `<text class="wallet-depth-label" x="${x}" y="24">${depth}-hop</text>`;
+  }).join("");
+
+  return `
+    <svg class="wallet-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Wallet relationship graph">
+      <defs>
+        <marker id="walletArrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" class="wallet-arrow"></path>
+        </marker>
+      </defs>
+      ${depthLabels}
+      ${edgeLines}
+      ${nodeCircles}
+    </svg>
+  `;
+}
+
+function renderWalletTransactions(analysis) {
+  const selected = state.selectedWallet || analysis.address;
+  const transactions = (analysis.transactions || analysis.graph.edges || []).filter(
+    (tx) => tx.from === selected || tx.to === selected || tx.source === selected || tx.target === selected
+  );
+  if (!transactions.length) return '<div class="muted">No transactions</div>';
+
+  return transactions
+    .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0))
+    .map((tx) => {
+      const source = tx.from || tx.source;
+      const target = tx.to || tx.target;
+      const hop = Number(tx.depth || 0) + 1;
+      const relationship = tx.relationship ? ` / ${tx.relationship}` : "";
+      const count = tx.count ? ` / ${tx.count} tx` : "";
+      return `
+        <div class="wallet-tx">
+          <span class="wallet-hop">${hop}-hop</span>
+          <code>${escapeHtml(shortAddress(source))}</code>
+          <span>-></span>
+          <code>${escapeHtml(shortAddress(target))}</code>
+          <strong>${escapeHtml(edgeAmount(tx, analysis.network))}</strong>
+          <small>${escapeHtml(`${hop}-hop${relationship}${count}`)}</small>
+          <small>${escapeHtml(tx.hash || tx.txHash || tx.id || "")}</small>
+          <small>${escapeHtml(edgeTime(tx))}</small>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderMonthlyStats(analysis) {
+  const selected = state.selectedWallet || analysis.address;
+  const knownCounts = analysis.monthlyCounts && analysis.monthlyCounts[selected];
+  if (knownCounts) {
+    const entries = Array.isArray(knownCounts) ? knownCounts : Object.entries(knownCounts);
+    return entries
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([month, count]) => `<div class="wallet-month"><span>${escapeHtml(month)}</span><strong>${count}</strong></div>`)
+      .join("");
+  }
+
+  const transactions = (analysis.transactions || []).filter((tx) => tx.from === selected || tx.to === selected);
+  const counts = new Map();
+  transactions.forEach((tx) => {
+    const month = transactionMonth(tx);
+    counts.set(month, (counts.get(month) || 0) + 1);
+  });
+
+  if (!counts.size) return '<div class="muted">No monthly stats</div>';
+
+  return Array.from(counts.entries())
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([month, count]) => `<div class="wallet-month"><span>${escapeHtml(month)}</span><strong>${count}</strong></div>`)
+    .join("");
+}
+
+function selectedWalletSummaryDetails(analysis) {
+  const selected = state.selectedWallet || analysis.address;
+  const node = (analysis.graph.nodes || []).find((item) => item.id === selected);
+  const stats = (analysis.nodeStats && analysis.nodeStats[selected]) || {};
+  const localTxCount = (analysis.transactions || analysis.graph.edges || []).filter(
+    (tx) => tx.from === selected || tx.to === selected || tx.source === selected || tx.target === selected
+  ).length;
+  const totalTxCount = stats.knownTransactionCount || (node && node.txCount) || localTxCount;
+  const counterpartyText = stats.counterpartyCount ? `${stats.counterpartyCount} counterparties` : "counterparty count pending";
+  const monthText = stats.monthsTracked ? `${stats.monthsTracked} monthly bucket(s)` : "monthly buckets from visible rows";
+
+  return `
+    <div class="wallet-selected">
+      <span>${node ? `${node.depth}-hop` : "wallet"}</span>
+      <code>${escapeHtml(selected)}</code>
+      <strong>${localTxCount} visible row(s) / ${totalTxCount} known transaction(s)</strong>
+      <small>${escapeHtml(`${counterpartyText} / ${monthText}`)}</small>
+    </div>
+  `;
+}
+
+function renderWalletSummaryStats(analysis) {
+  const summary = analysis.summary || {};
+  const items = [
+    ["total tx", summary.txCount],
+    ["fetched tx", summary.fetchedTransactionCount],
+    ["relation rows", summary.relationRows],
+    ["counterparties", summary.counterpartyCount],
+    ["funded UTXO", summary.fundedTxoCount],
+    ["spent UTXO", summary.spentTxoCount],
+    ["received", summary.totalReceivedNative ? `${summary.totalReceivedNative} ${analysis.network === "bitcoin" ? "BTC" : "ETH"}` : ""],
+    ["sent", summary.totalSentNative ? `${summary.totalSentNative} ${analysis.network === "bitcoin" ? "BTC" : "ETH"}` : ""],
+    ["balance", summary.finalBalanceNative ? `${summary.finalBalanceNative} ${analysis.network === "bitcoin" ? "BTC" : "ETH"}` : ""]
+  ].filter(([, value]) => value !== undefined && value !== "");
+
+  if (!items.length) return "";
+
+  return `
+    <div class="wallet-summary-grid">
+      ${items.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+    </div>
+  `;
+}
+
+function bindWalletGraphEvents() {
+  document.querySelectorAll(".wallet-svg-node").forEach((node) => {
+    const select = () => {
+      const wallet = node.getAttribute("data-wallet");
+      state.selectedWallet = wallet;
+      state.expandedWallets.add(wallet);
+      renderWalletPanel();
+    };
+    node.addEventListener("click", select);
+    node.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        select();
+      }
+    });
+  });
+}
+
+function renderWalletPanel() {
+  const box = $("#walletPanel");
+  if (!box) return;
+
+  if (!state.walletAnalysis) {
+    box.className = "muted";
+    box.textContent = "No wallet selected";
+    return;
+  }
+
+  const analysis = state.walletAnalysis;
+  if (!state.selectedWallet) state.selectedWallet = analysis.address;
+  if (!(state.expandedWallets instanceof Set)) state.expandedWallets = new Set();
+  const graphView = getVisibleWalletGraph(analysis);
+  const renderedObservations = (analysis.observations || [])
+    .map((item) => `<div class="wallet-observation"><strong>${escapeHtml(item.title)}</strong><br />${escapeHtml(item.detail)}</div>`)
+    .join("");
+
+  box.className = "wallet-graph";
+  box.innerHTML = [
+    `<p><strong>${escapeHtml(analysis.network)}</strong> / ${analysis.mock ? "demo" : "live"} / ${graphView.nodes.length}/${analysis.graph.nodes.length} node(s), ${graphView.edges.length}/${analysis.graph.edges.length} edge(s), ${state.expandedWallets.size} expanded</p>`,
+    renderWalletSummaryStats(analysis),
+    renderWalletGraphSvg(analysis),
+    selectedWalletSummaryDetails(analysis),
+    `<h2>Monthly Counts</h2><div class="wallet-months">${renderMonthlyStats(analysis)}</div>`,
+    `<h2>Selected Node Transactions</h2><div class="wallet-transactions">${renderWalletTransactions(analysis)}</div>`,
+    renderedObservations ? `<h2>Observations</h2><div class="wallet-observations">${renderedObservations}</div>` : ""
+  ].join("");
+  bindWalletGraphEvents();
+}
+
+async function analyzeWallet(address) {
+  const depth = Number($("#walletDepth").value || 2);
+  state.walletAnalysis = null;
+  state.selectedWallet = null;
+  state.expandedWallets = new Set();
+  $("#walletPanel").className = "muted";
+  $("#walletPanel").textContent = "Loading wallet graph";
+
+  try {
+    const data = await api("/api/wallet/analyze", {
+      method: "POST",
+      body: JSON.stringify({ address, depth })
+    });
+    state.walletAnalysis = data;
+    state.selectedWallet = data.address;
+    renderWalletPanel();
+  } catch (error) {
+    $("#walletPanel").className = "muted";
+    $("#walletPanel").textContent = error.message;
+  }
+}
+
 // --- Search (manual form, IOC chip click, IOC click-in-doc, drag-to-search) ---
 
 // IOC-typed search: used by IOC chip clicks, in-document IOC clicks, and
@@ -405,6 +782,10 @@ async function setHighlightMode(mode) {
 async function runSearch(value, iocType) {
   const query = String(value || "").trim();
   if (!query || !state.session) return;
+  if (isWalletIocType(iocType)) {
+    await analyzeWallet(query);
+    return;
+  }
   await submitQuery(iocType ? { iocs: [{ type: iocType, value: query }] } : { query });
 }
 
@@ -432,6 +813,13 @@ function hideSelectionMenu() {
 
 function boot() {
   $("#analyze").addEventListener("click", analyze);
+  $("#walletDemo").addEventListener("click", () => {
+    state.walletAnalysis = demoWalletAnalysis();
+    state.selectedWallet = state.walletAnalysis.address;
+    state.expandedWallets = new Set();
+    renderWalletPanel();
+  });
+  $("#walletDepth").addEventListener("change", renderWalletPanel);
 
   $("#dropzone").addEventListener("click", () => $("#files").click());
   $("#dropzone").addEventListener("dragover", (event) => {
@@ -523,6 +911,13 @@ async function init() {
   renderIocs();
   renderEntities();
   renderStageTray();
+  renderWalletPanel();
+  if (new URLSearchParams(window.location.search).get("walletDemo") === "1") {
+    state.walletAnalysis = demoWalletAnalysis();
+    state.selectedWallet = state.walletAnalysis.address;
+    state.expandedWallets = new Set();
+    renderWalletPanel();
+  }
   await refreshQuotas();
   await loadDocuments({ reset: true });
 }

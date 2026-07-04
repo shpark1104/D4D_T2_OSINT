@@ -69,6 +69,21 @@
           <div id="stageTray" class="stage-tray muted">왼쪽 IOC 칩을 여기로 드래그하세요</div>
         </section>
 
+        <section class="wallet-block">
+          <div class="wallet-heading">
+            <h2>Wallet Graph</h2>
+            <div class="wallet-tools">
+              <select id="walletDepth" aria-label="Wallet graph depth">
+                <option value="1">1-hop</option>
+                <option value="2" selected>2-hop</option>
+                <option value="3">3-hop</option>
+              </select>
+              <button id="walletDemo" type="button">Demo</button>
+            </div>
+          </div>
+          <div id="walletPanel" class="muted">No wallet selected</div>
+        </section>
+
         <section class="split">
           <article class="results-panel">
             <div class="results-toolbar">
@@ -113,6 +128,7 @@
       <button id="selectionSearchBtn" type="button">이 키워드로 검색</button>
     </div>
 
+    <script src="/wallet-demo-data.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>
