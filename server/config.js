@@ -37,6 +37,7 @@ loadDotEnv();
 const accessKey = process.env.STEALTHMOLE_ACCESS_KEY || "";
 const secretKey = process.env.STEALTHMOLE_SECRET_KEY || "";
 const mockFlag = String(process.env.STEALTHMOLE_MOCK || "").toLowerCase();
+const openaiKey = process.env.OPENAI_API_KEY || "";
 
 module.exports = {
   port: Number(process.env.PORT || 3000),
@@ -44,7 +45,15 @@ module.exports = {
     baseUrl: process.env.STEALTHMOLE_BASE_URL || "https://hackathon.stealthmole.com",
     accessKey,
     secretKey,
-    mockMode: mockFlag === "true" || !accessKey || !secretKey
+    mockMode: mockFlag === "true" || !accessKey || !secretKey,
+    cacheTtlMs: 60 * 60 * 1000,
+    minRequestIntervalMs: 250
+  },
+  llm: {
+    provider: "openai",
+    apiKey: openaiKey,
+    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+    enabled: Boolean(openaiKey)
   },
   limits: {
     jsonBytes: 12 * 1024 * 1024,

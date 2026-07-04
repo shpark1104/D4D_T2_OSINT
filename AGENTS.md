@@ -10,13 +10,27 @@ The goal of this stage is not a complete product. Keep the code light, understan
 
 ## Current Scope
 
-- Node.js based local web app.
-- ChatGPT-like incident intake UI for logs, notes, and text files.
-- Mechanical IOC extraction first.
-- StealthMole API proxy shape with mock mode.
-- Search-engine-like report listing.
-- Document viewer with IOC and semantic-signal highlighting.
-- Entity-resolution placeholder area for accounts, emails, domains, hosts, and IPs.
+Implements CTI_개발_마일스톤.md milestones M1-M5 (M6 entity resolution and M7
+graph visualization/dashboard are intentionally out of scope for now):
+
+- Node.js based local web app (no build step, no framework).
+- ChatGPT-like incident intake UI: session-based chat thread, drag&drop/click
+  file upload, text preview.
+- IOC extraction: regex-based (`server/iocExtractor.js`, M2a) merged with
+  optional OpenAI-based semantic extraction (`server/llmIocExtractor.js`, M2b).
+  LLM steps are skipped automatically when `OPENAI_API_KEY` is empty.
+- StealthMole API gateway (`server/stealthmoleClient.js`, M3): JWT auth,
+  IOC-type -> module routing table, in-memory cache (1h TTL), request
+  throttling, sync (`cl`/`cb`/`cds`/`rm`/`gm`/`lm`) and async (`tt`) search
+  normalized into one result schema. `dt` and `ub` are excluded per the
+  hackathon manual.
+- Search-engine-like report listing with module/sort filters and cursor
+  pagination (M4), backed by a per-session in-memory document index
+  (`server/sessions.js`).
+- Document viewer with IOC highlighting + click-to-search, drag-to-search,
+  and optional OpenAI-based semantic highlighting (`server/semanticHighlighter.js`,
+  M5a/M5b), cached per document.
+- Entity-resolution / knowledge-graph area (M6/M7) is not implemented yet.
 
 ## Non-Goals For This Base
 
@@ -66,13 +80,18 @@ If keys are empty or `STEALTHMOLE_MOCK=true`, the server returns mock search and
 
 ## LLM Integration Notes
 
-LLM work is intentionally a placeholder at this stage.
+LLM work uses the OpenAI Chat Completions API directly via `fetch` (no SDK
+dependency added). Set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`,
+default `gpt-4o-mini`) in `.env` to enable it; when empty, both LLM stages
+no-op and the app runs on regex extraction only.
 
-Suggested future boundaries:
+Module boundaries in place:
 
-- `server/iocExtractor.js`: deterministic extraction.
-- `server/llmHighlighter.js`: semantic extraction and rationale.
-- `server/entityResolver.js`: entity grouping and confidence scoring.
+- `server/iocExtractor.js`: deterministic (regex) extraction, defanging.
+- `server/llmClient.js`: thin OpenAI Chat Completions wrapper + JSON parsing helper.
+- `server/llmIocExtractor.js`: LLM-assisted IOC + semantic entity extraction (M2b).
+- `server/semanticHighlighter.js`: LLM document highlighting and rationale (M5b).
+- `server/entityResolver.js`: not implemented yet (M6, out of current scope).
 - `server/stealthmoleClient.js`: external CTI lookup only.
 
 Do not mix LLM prompts, StealthMole API calls, and UI-specific formatting in one file.
@@ -109,8 +128,12 @@ Avoid decorative UI work unless it improves analyst workflow.
 
 ## Suggested Next Tasks
 
-1. Confirm actual StealthMole credentials and test live search.
-2. Add a real LLM provider module for semantic highlights.
-3. Persist incidents and searches in a lightweight DB.
-4. Add detail/node drill-down for selected StealthMole reports.
-5. Replace heuristic entity resolution with evidence-backed clustering.
+1. Verify live StealthMole search end-to-end with real credentials (this
+   sandbox has no Node.js installed, so live runs have not been executed here).
+2. Validate the LLM extraction/highlighting prompts against real incident
+   text with `OPENAI_API_KEY` set; tune prompts as needed.
+3. Persist incidents and searches in a lightweight DB (currently in-memory
+   only; state resets on server restart).
+4. Add `/{service}/node` drill-down for `tt` results.
+5. Implement M6 (entity resolution) and M7 (graph visualization + dashboard
+   + STIX export) per CTI_개발_마일스톤.md.

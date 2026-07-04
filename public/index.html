@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>D4D CTI Base</title>
+    <title>D4D CTI Workbench</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <aside class="rail">
         <h1>D4D CTI</h1>
-        <p id="mode">mode: checking</p>
+        <p id="mode" class="muted">mode: checking</p>
 
         <section>
           <h2>IOC</h2>
@@ -18,8 +18,13 @@
         </section>
 
         <section>
-          <h2>Entity</h2>
-          <div id="entityList" class="muted">Placeholder</div>
+          <h2>Entity (LLM)</h2>
+          <div id="entityList" class="muted">No entity</div>
+        </section>
+
+        <section>
+          <h2>Quota</h2>
+          <div id="quotaList" class="muted">-</div>
         </section>
       </aside>
 
@@ -31,14 +36,14 @@
           </div>
           <form id="searchForm" class="search">
             <select id="service">
-              <option value="cds">CDS</option>
+              <option value="">auto</option>
+              <option value="tt">TT</option>
               <option value="cl">CL</option>
               <option value="cb">CB</option>
-              <option value="tt">TT</option>
-              <option value="cdf">CDF</option>
+              <option value="cds">CDS</option>
+              <option value="rm">RM</option>
               <option value="gm">GM</option>
               <option value="lm">LM</option>
-              <option value="rm">RM</option>
             </select>
             <input id="query" placeholder="IOC or keyword" />
             <button>Search</button>
@@ -46,25 +51,67 @@
         </header>
 
         <section class="intake">
-          <textarea id="message" placeholder="Paste incident logs, notes, or file text"></textarea>
+          <div id="chatThread" class="chat-thread muted">아직 업로드된 내용이 없습니다.</div>
+          <div id="dropzone" class="dropzone">여기로 파일을 드래그하거나 클릭하여 업로드 (.log .txt .csv .json .eml)</div>
+          <input id="files" type="file" multiple hidden />
+          <textarea id="message" placeholder="침해사고 로그, 노트, 텍스트를 붙여넣으세요"></textarea>
           <div class="actions">
-            <input id="files" type="file" multiple />
-            <button id="analyze">Analyze</button>
+            <div id="pendingFiles" class="muted">첨부 파일 없음</div>
+            <button id="analyze">분석 시작</button>
           </div>
         </section>
 
+        <section class="stage">
+          <div class="stage-header">
+            <h2>StealthMole 조회 대기열</h2>
+            <button id="runQueryBtn" disabled>StealthMole 조회 실행</button>
+          </div>
+          <div id="stageTray" class="stage-tray muted">왼쪽 IOC 칩을 여기로 드래그하세요</div>
+        </section>
+
         <section class="split">
-          <article>
-            <h2>Document</h2>
-            <pre id="document">No document</pre>
+          <article class="results-panel">
+            <div class="results-toolbar">
+              <select id="moduleFilter">
+                <option value="">전체 모듈</option>
+                <option value="tt">TT</option>
+                <option value="cl">CL</option>
+                <option value="cb">CB</option>
+                <option value="cds">CDS</option>
+                <option value="rm">RM</option>
+                <option value="gm">GM</option>
+                <option value="lm">LM</option>
+              </select>
+              <select id="sortOrder">
+                <option value="recent">최신순</option>
+                <option value="source">출처별</option>
+              </select>
+              <span id="resultsCount" class="muted"></span>
+            </div>
+            <div id="resultsList" class="results-list muted">No reports</div>
+            <button id="loadMore" class="load-more" hidden>더 보기</button>
           </article>
-          <article>
-            <h2>Reports</h2>
-            <div id="results" class="muted">No reports</div>
+
+          <article class="viewer-panel">
+            <div class="viewer-toolbar">
+              <h2 id="docTitle">문서를 선택하세요</h2>
+              <div class="highlight-toggle">
+                <button data-mode="ioc" class="hl-btn active">IOC</button>
+                <button data-mode="semantic" class="hl-btn">의미론적</button>
+                <button data-mode="all" class="hl-btn">전체</button>
+                <button data-mode="off" class="hl-btn">끄기</button>
+              </div>
+            </div>
+            <div id="docMeta" class="muted"></div>
+            <pre id="document">왼쪽 목록에서 문서를 클릭하면 여기에 표시됩니다.</pre>
           </article>
         </section>
       </section>
     </main>
+
+    <div id="selectionMenu" class="selection-menu" hidden>
+      <button id="selectionSearchBtn" type="button">이 키워드로 검색</button>
+    </div>
 
     <script src="/app.js"></script>
   </body>
