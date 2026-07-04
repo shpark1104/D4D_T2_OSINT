@@ -64,7 +64,7 @@ Node.js 18 or later is expected. There are no runtime npm dependencies.
 
 ## Vercel Deployment
 
-Vercel serves static assets from [public/](./public) and routes `/api/*` to [api/[...path].js](./api/[...path].js), which delegates to the same Node router used locally. The root [server.js](./server.js) remains the local/Vercel Node server entrypoint, but the catch-all API function makes API routing explicit for Vercel deployments.
+Vercel serves static assets from [public/](./public) and routes `/api/*` through [vercel.json](./vercel.json) to [api/index.js](./api/index.js), which delegates to the same Node router used locally. The root [server.js](./server.js) remains the local Node server entrypoint.
 
 Recommended Vercel settings:
 
@@ -214,7 +214,8 @@ CTI_개발_마일스톤.md           Milestone plan
 package.json                  Node scripts and engine hint
 server.js                     Root Node server entrypoint for local start and Vercel
 
-api/[...path].js              Vercel catch-all API function for /api/*
+api/index.js                  Vercel API function for /api/* rewrites
+vercel.json                   Vercel API rewrite and function settings
 server/config.js              .env loader and runtime config
 server/index.js               HTTP routing, static serving, API routes
 server/sessions.js            In-memory session/document/query store
