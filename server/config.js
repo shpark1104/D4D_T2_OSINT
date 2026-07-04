@@ -40,6 +40,7 @@ const mockFlag = String(process.env.STEALTHMOLE_MOCK || "").toLowerCase();
 const openaiKey = process.env.OPENAI_API_KEY || "";
 
 module.exports = {
+  host: process.env.HOST || "0.0.0.0",
   port: Number(process.env.PORT || 3000),
   stealthmole: {
     baseUrl: process.env.STEALTHMOLE_BASE_URL || "https://hackathon.stealthmole.com",

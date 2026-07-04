@@ -1,7 +1,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { port, stealthmole, llm } = require("./config");
+const { host, port, stealthmole, llm } = require("./config");
 const { extractIocsFromText, mergeIocs } = require("./iocExtractor");
 const { extractIocsWithLlm } = require("./llmIocExtractor");
 const { getSemanticHighlights } = require("./semanticHighlighter");
@@ -124,6 +124,13 @@ async function handleApi(req, res, pathname, query) {
       return sendJson(res, 200, serializeSession(session));
     }
 
+    if (req.method === "POST" && rest === "/semantic") {
+      const body = await readJson(req);
+      const text = String(body.text || "");
+      const highlights = await getSemanticHighlights(text);
+      return sendJson(res, 200, { enabled: llm.enabled, highlights });
+    }
+
     if (req.method === "POST" && rest === "/query") {
       const body = await readJson(req);
       let queryResultsByIoc;
@@ -151,7 +158,7 @@ async function handleApi(req, res, pathname, query) {
             queried_at: new Date().toISOString()
           };
         }
-        queryResultsByIoc = [[{ query_ioc: { type: ioc.type, value }, ...result }]];
+        queryResultsByIoc = [[{ ...result, query_ioc: { type: ioc.type, value } }]];
       } else {
         const rawIocs = Array.isArray(body.iocs) ? body.iocs : [];
         targets = (
@@ -257,8 +264,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`D4D CTI base running at http://localhost:${port}`);
+server.listen(port, host, () => {
+  console.log(`D4D CTI base running at http://${host}:${port}`);
+  console.log(`Local browser URL: http://localhost:${port}`);
   console.log(`StealthMole mode: ${stealthmole.mockMode ? "mock" : "live"}`);
   console.log(`LLM (OpenAI) mode: ${llm.enabled ? "enabled" : "disabled (no OPENAI_API_KEY)"}`);
 });

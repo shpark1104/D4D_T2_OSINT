@@ -11,15 +11,9 @@ const ROUTES = {
   domain: [
     { module: "cl", kind: "sync", query: (v) => `domain:${v}` },
     { module: "cds", kind: "sync", query: (v) => `domain:${v}` },
-    { module: "rm", kind: "sync", query: (v) => `domain:${v}` },
-    { module: "gm", kind: "sync", query: (v) => `domain:${v}` },
-    { module: "lm", kind: "sync", query: (v) => `domain:${v}` }
+    { module: "rm", kind: "sync", query: (v) => `domain:${v}` }
   ],
-  url: [
-    { module: "cds", kind: "sync", query: (v) => `url:${v}` },
-    { module: "gm", kind: "sync", query: (v) => `url:${v}` },
-    { module: "lm", kind: "sync", query: (v) => `url:${v}` }
-  ],
+  url: [{ module: "cds", kind: "sync", query: (v) => `url:${v}` }],
   email: [
     { module: "cl", kind: "sync", query: (v) => `email:${v}` },
     { module: "cds", kind: "sync", query: (v) => `email:${v}` }
@@ -132,7 +126,37 @@ function unixToIso(seconds) {
 }
 
 function stripHtml(value) {
-  return String(value || "").replace(/<[^>]*>/g, "");
+  return String(value || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function compactText(...parts) {
+  return parts
+    .filter((part) => part !== undefined && part !== null && String(part).trim() !== "")
+    .map((part) => String(part).trim())
+    .join(" | ");
+}
+
+function present(value) {
+  return value ? "present" : "-";
+}
+
+function firstReadableLine(value, fallback) {
+  const line = String(value || "")
+    .split(/\r?\n/)
+    .map((part) => part.trim())
+    .find(Boolean);
+  return (line || fallback || "(untitled)").slice(0, 140);
 }
 
 // Convert each module's native response shape into the unified result schema.
@@ -143,7 +167,13 @@ function normalizeItem(module, item) {
         id: item.id,
         source_url: null,
         title: `Credential leak: ${item.email || item.domain || "unknown"}`,
-        content: `domain=${item.domain || "-"} email=${item.email || "-"} password=${item.password || "-"} leaked_from=${item.leaked_from || "-"}`,
+        content: compactText(
+          `domain=${item.domain || "-"}`,
+          `email=${item.email || "-"}`,
+          `password=${present(item.password)}`,
+          `leaked_from=${item.leaked_from || "-"}`,
+          `leaked_date=${item.leaked_date || "-"}`
+        ),
         timestamp: item.leaked_date || null,
         forum_name: item.leaked_from || "Credential Lookout",
         author_alias: item.email || item.domain || null,
@@ -155,7 +185,7 @@ function normalizeItem(module, item) {
         id: item.id,
         source_url: null,
         title: `Combo leak: ${item.user || "unknown"}`,
-        content: `user=${item.user || "-"} password=${item.password || "-"}`,
+        content: compactText(`user=${item.user || "-"}`, `password=${present(item.password)}`),
         timestamp: unixToIso(item.leakeddate),
         forum_name: "Combo Binder",
         author_alias: item.user || null,
@@ -167,7 +197,14 @@ function normalizeItem(module, item) {
         id: item.id,
         source_url: null,
         title: `Stealer log: ${item.host || "unknown host"}`,
-        content: `host=${item.host || "-"} user=${item.user || "-"} ip=${item.ip || "-"} computer=${item.computername || "-"}`,
+        content: compactText(
+          `host=${item.host || "-"}`,
+          `user=${item.user || "-"}`,
+          `username=${item.username || "-"}`,
+          `password=${present(item.password)}`,
+          `ip=${item.ip || "-"}`,
+          `computer=${item.computername || "-"}`
+        ),
         timestamp: unixToIso(item.leakeddate),
         forum_name: "Compromised Data Set",
         author_alias: item.user || item.username || null,
@@ -179,7 +216,13 @@ function normalizeItem(module, item) {
         id: item.id,
         source_url: item.proof_url || null,
         title: `${item.attack_group || "Unknown group"} -> ${item.victim || "unknown victim"}`,
-        content: `victim=${item.victim || "-"} site=${item.site || "-"} country=${item.country || "-"} sector=${item.sector || "-"}`,
+        content: compactText(
+          `victim=${item.victim || "-"}`,
+          `site=${item.site || "-"}`,
+          `country=${item.country || "-"}`,
+          `sector=${item.sector || "-"}`,
+          item.proof_url && `proof=${item.proof_url}`
+        ),
         timestamp: unixToIso(item.detection_datetime),
         forum_name: item.attack_group || "Ransomware Monitoring",
         author_alias: item.attack_group || null,
@@ -192,7 +235,7 @@ function normalizeItem(module, item) {
         id: item.id,
         source_url: item.proof_url || null,
         title: item.title || "(untitled)",
-        content: item.title || "",
+        content: compactText(item.title || "", item.author && `author=${item.author}`, item.proof_url && `proof=${item.proof_url}`),
         timestamp: unixToIso(item.detection_datetime),
         forum_name: module === "gm" ? "Government Monitoring" : "Leaked Monitoring",
         author_alias: item.author || null,
@@ -200,17 +243,28 @@ function normalizeItem(module, item) {
         raw_response: item
       };
     case "tt":
-      return {
-        id: item.id,
-        source_url: null,
-        title: stripHtml(item.value || item.highlight || "(telegram result)").slice(0, 140),
-        content: stripHtml(item.highlight || item.value || ""),
-        timestamp: item.createDate ? new Date(item.createDate * 1000).toISOString() : null,
-        forum_name: "Telegram Tracker",
-        author_alias: null,
-        indicators_tagged: [],
-        raw_response: item
-      };
+      {
+        const content = stripHtml(item.highlight || item.value || "");
+        const value = String(item.value || "");
+        const valueLooksLikeNodeId = /^[0-9]+(?:_[0-9]+)?$/.test(value);
+        const title =
+          valueLooksLikeNodeId && content === value
+            ? `Telegram node ${value}`
+            : valueLooksLikeNodeId
+              ? firstReadableLine(content, value)
+              : firstReadableLine(value, content);
+        return {
+          id: item.id,
+          source_url: null,
+          title,
+          content,
+          timestamp: item.createDate ? new Date(item.createDate * 1000).toISOString() : null,
+          forum_name: "Telegram Tracker",
+          author_alias: null,
+          indicators_tagged: [],
+          raw_response: item
+        };
+      }
     default:
       return {
         id: item.id || crypto.randomUUID(),
@@ -381,10 +435,10 @@ async function queryIoc(ioc) {
       if (route.kind === "sync") {
         const queryString = route.query(ioc.value);
         const result = await syncSearch(route.module, queryString, {});
-        return { query_ioc: { type: ioc.type, value: ioc.value }, ...result };
+        return { ...result, query_ioc: { type: ioc.type, value: ioc.value } };
       }
       const result = await asyncSearchAll(route.indicator, ioc.value, {});
-      return { query_ioc: { type: ioc.type, value: ioc.value }, ...result };
+      return { ...result, query_ioc: { type: ioc.type, value: ioc.value } };
     })
   );
 

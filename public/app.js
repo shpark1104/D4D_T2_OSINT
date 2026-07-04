@@ -14,15 +14,26 @@ const IOC_COLOR_CLASS = {
   mitre_attack_id: "ioc-cve"
 };
 
+const DRAG_IOC = "application/x-d4d-ioc";
+const DRAG_NODE = "application/x-d4d-node";
+const BTC_ADDRESS_PATTERN = /^(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{25,59})$/;
+const ETH_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
+
 const state = {
   session: null,
+  llmEnabled: false,
   pendingFiles: [],
-  documents: { data: [], totalCount: 0, cursor: null },
+  documents: { allData: [], data: [], totalCount: 0, cursor: null, moduleCounts: {} },
+  resultsMessage: "조회 결과 없음",
+  interestIocs: [],
+  stagedIocs: [],
+  interestNodes: [],
   currentDoc: null,
+  currentView: null,
+  currentNode: null,
   semanticHighlights: null,
-  highlightMode: "ioc",
-  filters: { module: "", sort: "recent" },
-  stagedIocs: []
+  semanticEnabled: true,
+  walletGraph: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -39,16 +50,21 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Lightweight term-based highlight for search-result snippets (M4). The full
-// offset-accurate highlighting lives in buildHighlightHtml for the document
-// viewer (M5a); snippets only need to mark the IOCs that matched this result.
-function highlightTerms(text, terms) {
-  let html = escapeHtml(text);
-  for (const term of (terms || []).filter(Boolean)) {
-    const pattern = new RegExp(escapeRegExp(escapeHtml(term)), "gi");
-    html = html.replace(pattern, (match) => `<mark>${match}</mark>`);
-  }
-  return html;
+function shortText(value, length = 96) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > length ? `${text.slice(0, length)}...` : text;
+}
+
+function iocKey(ioc) {
+  return `${ioc.type}:${String(ioc.value || "").toLowerCase()}`;
+}
+
+function nodeKey(node) {
+  return `${node.module || "node"}:${node.id}`;
+}
+
+function nodeTypeLabel(node) {
+  return node.kind === "evidence" ? "근거자료" : node.module || "node";
 }
 
 async function api(path, options = {}) {
@@ -61,144 +77,245 @@ async function api(path, options = {}) {
   return data;
 }
 
-// --- Rail: IOCs / entities / quotas ---
+function setDrag(event, type, payload) {
+  event.dataTransfer.setData(type, JSON.stringify(payload));
+  event.dataTransfer.setData("text/plain", payload.value || payload.title || payload.id || "");
+  event.dataTransfer.effectAllowed = "copy";
+}
 
-function renderIocs() {
-  const list = $("#iocList");
-  const iocs = state.session ? state.session.iocs : [];
-  if (!iocs.length) {
-    list.className = "chips muted";
-    list.textContent = "No IOC";
-    return;
-  }
-
-  list.className = "chips";
-  list.innerHTML = "";
-  for (const ioc of iocs) {
-    const chip = document.createElement("button");
-    chip.className = `chip ${IOC_COLOR_CLASS[ioc.type] || "ioc-generic"}${ioc.queried ? " queried" : ""}`;
-    chip.textContent = `${ioc.type}: ${ioc.value}`;
-    chip.title = `${ioc.extraction_method} · confidence ${ioc.confidence}${ioc.queried ? " · 조회됨" : ""}\n드래그: 대기열에 추가 · 클릭: 즉시 단일 조회`;
-    chip.draggable = true;
-    chip.addEventListener("dragstart", (event) => {
-      event.dataTransfer.setData("application/json", JSON.stringify({ type: ioc.type, value: ioc.value }));
-      event.dataTransfer.effectAllowed = "copy";
-    });
-    chip.addEventListener("click", () => runSearch(ioc.value, ioc.type));
-    list.appendChild(chip);
+function readDrag(event, type) {
+  const raw = event.dataTransfer.getData(type);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
 }
 
-// --- StealthMole query tray (drag IOC chips here, then run in a batch) ---
-
-function renderStageTray() {
-  const tray = $("#stageTray");
-  const runBtn = $("#runQueryBtn");
-  if (!state.stagedIocs.length) {
-    tray.className = "stage-tray muted";
-    tray.textContent = "왼쪽 IOC 칩을 여기로 드래그하세요";
-    runBtn.disabled = true;
-    return;
-  }
-
-  tray.className = "stage-tray";
-  tray.innerHTML = "";
-  for (const ioc of state.stagedIocs) {
-    const chip = document.createElement("button");
-    chip.className = `chip ${IOC_COLOR_CLASS[ioc.type] || "ioc-generic"}`;
-    chip.textContent = `${ioc.type}: ${ioc.value} ×`;
-    chip.title = "클릭하면 대기열에서 제거";
-    chip.addEventListener("click", () => {
-      state.stagedIocs = state.stagedIocs.filter((staged) => !(staged.type === ioc.type && staged.value === ioc.value));
-      renderStageTray();
-    });
-    tray.appendChild(chip);
-  }
-  runBtn.disabled = false;
+function hasDragType(event, type) {
+  return Array.from(event.dataTransfer.types || []).includes(type);
 }
 
-function stageIoc(ioc) {
-  const exists = state.stagedIocs.some((staged) => staged.type === ioc.type && staged.value === ioc.value);
-  if (!exists) state.stagedIocs.push(ioc);
+function makeDropTarget(element, dragType, onDrop) {
+  element.addEventListener("dragover", (event) => {
+    if (!hasDragType(event, dragType)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    element.classList.add("drag-over");
+  });
+  element.addEventListener("dragleave", () => element.classList.remove("drag-over"));
+  element.addEventListener("drop", (event) => {
+    const payload = readDrag(event, dragType);
+    if (!payload) return;
+    event.preventDefault();
+    event.stopPropagation();
+    element.classList.remove("drag-over");
+    onDrop(payload);
+  });
+}
+
+function makeSearchPanelDropTarget(element) {
+  element.addEventListener("dragover", (event) => {
+    const hasFiles = Array.from(event.dataTransfer.types || []).includes("Files");
+    if (!hasFiles && !hasDragType(event, DRAG_IOC)) return;
+    event.preventDefault();
+    element.classList.add("drag-over");
+  });
+
+  element.addEventListener("dragleave", (event) => {
+    if (element.contains(event.relatedTarget)) return;
+    element.classList.remove("drag-over");
+  });
+
+  element.addEventListener("drop", (event) => {
+    const ioc = readDrag(event, DRAG_IOC);
+    const files = event.dataTransfer.files;
+    if (!ioc && !files.length) return;
+    event.preventDefault();
+    element.classList.remove("drag-over");
+
+    if (files.length) {
+      addFiles(files);
+      return;
+    }
+    stageIoc(ioc);
+  });
+}
+
+function chipClass(type) {
+  return IOC_COLOR_CLASS[type] || "ioc-generic";
+}
+
+function setViewerLoading(isLoading, text = "처리 중...") {
+  const overlay = $("#viewerLoading");
+  if (!overlay) return;
+  $("#viewerLoadingText").textContent = text;
+  overlay.hidden = !isLoading;
+}
+
+function renderSemanticToggleStatus() {
+  const toggle = $("#semanticToggle");
+  const status = $("#semanticToggleStatus");
+  if (!toggle || !status) return;
+  if (!state.llmEnabled) {
+    status.textContent = "OPENAI_API_KEY 없음";
+    return;
+  }
+  status.textContent = state.semanticEnabled ? "의미 구절 밑줄 표시" : "의미 밑줄 숨김";
+}
+
+function renderCurrentNodeAction() {
+  const addButton = $("#addCurrentNodeBtn");
+  if (addButton) {
+    addButton.disabled = !state.currentNode;
+    addButton.textContent = "+";
+    addButton.title = state.currentNode ? "관심 노드 추가" : "표시 중인 노드 없음";
+    addButton.setAttribute("aria-label", "관심 노드 추가");
+  }
+}
+
+// --- Left widgets: analyst-selected IOCs / nodes ---
+
+function addInterestIoc(ioc) {
+  if (!ioc || !ioc.value) return;
+  const normalized = { type: ioc.type || "keyword", value: String(ioc.value).trim() };
+  if (!normalized.value) return;
+  if (!state.interestIocs.some((item) => iocKey(item) === iocKey(normalized))) {
+    state.interestIocs.push(normalized);
+  }
+  renderInterestIocs();
+}
+
+function removeInterestIoc(ioc) {
+  state.interestIocs = state.interestIocs.filter((item) => iocKey(item) !== iocKey(ioc));
+  state.stagedIocs = state.stagedIocs.filter((item) => iocKey(item) !== iocKey(ioc));
+  renderInterestIocs();
   renderStageTray();
 }
 
-async function runStagedQuery() {
-  if (!state.stagedIocs.length) return;
-  const runBtn = $("#runQueryBtn");
-  runBtn.disabled = true;
-  runBtn.textContent = "조회 중...";
-  try {
-    await submitQuery({ iocs: state.stagedIocs });
-    state.stagedIocs = [];
-    renderStageTray();
-  } catch (error) {
-    alert(`StealthMole 조회 실패: ${error.message}`);
-  } finally {
-    runBtn.textContent = "StealthMole 조회 실행";
-    runBtn.disabled = !state.stagedIocs.length;
-  }
-}
-
-function renderEntities() {
-  const box = $("#entityList");
-  const entities = state.session ? state.session.entities : [];
-  if (!entities.length) {
-    box.className = "muted";
-    box.textContent = "No entity";
+function renderInterestIocs() {
+  const list = $("#interestIocList");
+  $("#interestIocCount").textContent = String(state.interestIocs.length);
+  if (!state.interestIocs.length) {
+    list.className = "watch-list drop-target muted";
+    list.textContent = "가운데 뷰어의 IOC 하이라이트를 클릭해서 등록";
     return;
   }
-  box.className = "";
-  box.innerHTML = "";
-  for (const entity of entities) {
+
+  list.className = "watch-list drop-target";
+  list.innerHTML = "";
+  for (const ioc of state.interestIocs) {
     const row = document.createElement("div");
-    row.className = "entity-row";
-    row.innerHTML = `<strong>${escapeHtml(entity.type)}</strong>: ${escapeHtml(entity.value)}`;
-    row.title = entity.reasoning || "";
-    box.appendChild(row);
+    row.className = `watch-item ${chipClass(ioc.type)}`;
+    row.draggable = true;
+    row.innerHTML = `
+      <div>
+        <strong>${escapeHtml(ioc.type)}</strong>
+        <span>${escapeHtml(ioc.value)}</span>
+      </div>
+      <button type="button" title="제거">x</button>
+    `;
+    row.addEventListener("dragstart", (event) => setDrag(event, DRAG_IOC, ioc));
+    row.querySelector("button").addEventListener("click", () => removeInterestIoc(ioc));
+    list.appendChild(row);
   }
 }
 
-async function refreshQuotas() {
-  try {
-    const quotas = await api("/api/quotas");
-    const box = $("#quotaList");
-    const entries = Object.entries(quotas);
-    if (!entries.length) {
-      box.className = "muted";
-      box.textContent = "-";
-      return;
-    }
-    box.className = "";
-    box.innerHTML = entries
-      .map(([module, q]) => `<div class="quota-row">${escapeHtml(module)}: ${q.used}/${q.allowed}</div>`)
-      .join("");
-  } catch {
-    // quota display is best-effort
-  }
+function makeNodePayload(doc) {
+  return {
+    id: doc.id,
+    module: doc.module,
+    title: doc.title || "(untitled)",
+    forum_name: doc.forum_name || "",
+    timestamp: doc.timestamp || "",
+    query_ioc: doc.query_ioc || null
+  };
 }
 
-// --- Chat / intake ---
+function addInterestNode(node) {
+  if (!node || !node.id) return;
+  if (!state.interestNodes.some((item) => nodeKey(item) === nodeKey(node))) {
+    state.interestNodes.push(node);
+  }
+  renderInterestNodes();
+  renderCurrentNodeAction();
+}
 
-function renderChatThread() {
-  const box = $("#chatThread");
-  const messages = state.session ? state.session.messages : [];
-  if (!messages.length) {
-    box.className = "chat-thread muted";
-    box.textContent = "아직 업로드된 내용이 없습니다.";
+function removeInterestNode(node) {
+  state.interestNodes = state.interestNodes.filter((item) => nodeKey(item) !== nodeKey(node));
+  renderInterestNodes();
+}
+
+function applyNodeRename(node, title) {
+  if (!node || !title) return;
+  const nextTitle = title.trim();
+  if (!nextTitle) return;
+  const key = nodeKey(node);
+
+  for (const item of state.interestNodes) {
+    if (nodeKey(item) === key) item.title = nextTitle;
+  }
+  if (state.currentNode && nodeKey(state.currentNode) === key) {
+    state.currentNode.title = nextTitle;
+    if (state.currentView) state.currentView.title = nextTitle;
+  }
+  if (state.currentDoc && nodeKey(makeNodePayload(state.currentDoc)) === key) {
+    state.currentDoc.title = nextTitle;
+  }
+  renderInterestNodes();
+  renderViewer();
+}
+
+function renameNode(node) {
+  if (!node) return;
+  const nextTitle = window.prompt("새 이름", node.title || "");
+  if (nextTitle === null) return;
+  applyNodeRename(node, nextTitle);
+}
+
+function renderInterestNodes() {
+  const list = $("#interestNodeList");
+  $("#interestNodeCount").textContent = String(state.interestNodes.length);
+  if (!state.interestNodes.length) {
+    list.className = "watch-list drop-target muted";
+    list.textContent = "오른쪽 검색 결과를 드래그해서 등록";
     return;
   }
-  box.className = "chat-thread";
-  box.innerHTML = messages
-    .map((message) => {
-      const files = message.files.length
-        ? `<div class="msg-files">${message.files.map((f) => `📎 ${escapeHtml(f.name)}`).join(" ")}</div>`
-        : "";
-      return `<div class="msg msg-${message.role}"><div class="msg-text">${escapeHtml(message.text)}</div>${files}</div>`;
-    })
-    .join("");
-  box.scrollTop = box.scrollHeight;
+
+  list.className = "watch-list drop-target";
+  list.innerHTML = "";
+  for (const node of state.interestNodes) {
+    const row = document.createElement("div");
+    row.className = "watch-item node-item";
+    row.draggable = true;
+    row.innerHTML = `
+      <div>
+        <strong>${escapeHtml(nodeTypeLabel(node))}</strong>
+        <span>${escapeHtml(shortText(node.title, 72))}</span>
+      </div>
+      <div class="watch-actions">
+        <button class="rename-node-btn" type="button" title="이름 변경" aria-label="이름 변경">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 20h9"></path>
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+          </svg>
+        </button>
+        <button class="remove-node-btn" type="button" title="제거">x</button>
+      </div>
+    `;
+    row.addEventListener("dragstart", (event) => setDrag(event, DRAG_NODE, node));
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      openInterestNode(node).catch((error) => alert(`노드 열기 실패: ${error.message}`));
+    });
+    row.querySelector(".rename-node-btn").addEventListener("click", () => renameNode(node));
+    row.querySelector(".remove-node-btn").addEventListener("click", () => removeInterestNode(node));
+    list.appendChild(row);
+  }
 }
+
+// --- Evidence intake and IOC candidate highlighting ---
 
 function renderPendingFiles() {
   const box = $("#pendingFiles");
@@ -208,7 +325,7 @@ function renderPendingFiles() {
     return;
   }
   box.className = "";
-  box.textContent = `첨부됨: ${state.pendingFiles.map((f) => f.name).join(", ")}`;
+  box.textContent = `첨부 ${state.pendingFiles.map((file) => file.name).join(", ")}`;
 }
 
 async function addFiles(fileList) {
@@ -219,46 +336,177 @@ async function addFiles(fileList) {
   renderPendingFiles();
 }
 
-async function analyze() {
+function buildSourceView(message, files, iocs) {
+  const sources = [];
+  if (String(message || "").trim()) {
+    sources.push({ name: "message", label: "붙여넣은 분석 근거 자료", content: message });
+  }
+  for (const file of files || []) {
+    if (file.content) sources.push({ name: file.name, label: file.name, content: file.content });
+  }
+
+  let content = "";
+  const iocSpans = [];
+  for (const source of sources) {
+    const header = `${content ? "\n\n" : ""}--- ${source.label} ---\n`;
+    content += header;
+    const sourceStart = content.length;
+    content += source.content;
+
+    for (const ioc of iocs || []) {
+      if (ioc.source_file !== source.name || !ioc.offset) continue;
+      iocSpans.push({
+        ...ioc,
+        offset: {
+          start: sourceStart + ioc.offset.start,
+          end: sourceStart + ioc.offset.end
+        }
+      });
+    }
+  }
+
+  return {
+    kind: "source",
+    title: "분석 근거 자료",
+    meta: `분석 근거 ${sources.length}건, IOC 후보 ${iocSpans.length}건`,
+    content: content || "분석할 원문이 없습니다.",
+    iocSpans
+  };
+}
+
+function makeEvidenceNode(view, session) {
+  const lastMessage = session.messages?.[session.messages.length - 1];
+  return {
+    id: lastMessage?.id || `evidence:${Date.now()}`,
+    kind: "evidence",
+    module: "evidence",
+    title: view.title,
+    meta: view.meta,
+    content: view.content,
+    iocSpans: view.iocSpans || [],
+    timestamp: lastMessage?.createdAt || new Date().toISOString()
+  };
+}
+
+async function analyzeSources() {
   const message = $("#message").value;
   if (!message.trim() && !state.pendingFiles.length) return;
 
   const files = state.pendingFiles;
   $("#analyze").disabled = true;
-  $("#analyze").textContent = "분석 중...";
+  $("#analyze").textContent = "제출 중...";
+  setViewerLoading(true, state.llmEnabled ? "자료 제출 중... OpenAI 보조 분석 실행 중" : "자료 제출 중...");
   try {
     const session = await api(`/api/sessions/${state.session.id}/messages`, {
       method: "POST",
       body: JSON.stringify({ message, files })
     });
     state.session = session;
+    state.currentDoc = null;
+    state.semanticHighlights = null;
+    state.currentView = buildSourceView(message, files, session.iocs);
+    state.currentNode = makeEvidenceNode(state.currentView, session);
+    addInterestNode(state.currentNode);
     state.pendingFiles = [];
     $("#message").value = "";
-    $("#title").textContent = session.title;
     renderPendingFiles();
-    renderChatThread();
-    renderIocs();
-    renderEntities();
-    await loadDocuments({ reset: true });
+    renderViewer();
+    clearWalletGraph();
+    if (state.semanticEnabled) {
+      await loadSemanticHighlights();
+    }
   } catch (error) {
-    alert(`분석 실패: ${error.message}`);
+    alert(`자료 제출 실패: ${error.message}`);
   } finally {
+    setViewerLoading(false);
     $("#analyze").disabled = false;
-    $("#analyze").textContent = "분석 시작";
+    $("#analyze").textContent = "자료 제출";
   }
 }
 
-// --- Results list (M4) ---
+// --- Query queue ---
+
+function stageIoc(ioc) {
+  if (!ioc || !ioc.value) return;
+  if (!state.stagedIocs.some((item) => iocKey(item) === iocKey(ioc))) {
+    state.stagedIocs.push({ type: ioc.type || "keyword", value: String(ioc.value).trim() });
+  }
+  renderStageTray();
+}
+
+function removeStagedIoc(ioc) {
+  state.stagedIocs = state.stagedIocs.filter((item) => iocKey(item) !== iocKey(ioc));
+  renderStageTray();
+}
+
+function renderStageTray() {
+  const tray = $("#stageTray");
+  const runBtn = $("#runQueryBtn");
+  if (!state.stagedIocs.length) {
+    tray.className = "stage-tray drop-target muted";
+    tray.textContent = "관심 IOC를 여기로 드래그";
+    runBtn.disabled = true;
+    return;
+  }
+
+  tray.className = "stage-tray drop-target";
+  tray.innerHTML = "";
+  for (const ioc of state.stagedIocs) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = `queue-chip ${chipClass(ioc.type)}`;
+    chip.textContent = `${ioc.type}: ${ioc.value} x`;
+    chip.title = "대기열에서 제거";
+    chip.addEventListener("click", () => removeStagedIoc(ioc));
+    tray.appendChild(chip);
+  }
+  runBtn.disabled = false;
+}
+
+async function runStagedQuery() {
+  if (!state.stagedIocs.length) return;
+  const batch = [...state.stagedIocs];
+  $("#runQueryBtn").disabled = true;
+  $("#runQueryBtn").textContent = "조회 중...";
+  try {
+    await submitQuery({ iocs: batch });
+    state.stagedIocs = [];
+    renderStageTray();
+  } catch (error) {
+    alert(`StealthMole 조회 실패: ${error.message}`);
+  } finally {
+    $("#runQueryBtn").textContent = "조회 실행";
+    $("#runQueryBtn").disabled = !state.stagedIocs.length;
+  }
+}
+
+async function runKeywordSearch() {
+  const query = $("#query").value.trim();
+  const module = $("#service").value;
+  if (!query) return;
+  await submitQuery(module ? { module, query } : { query });
+}
+
+// --- Results list: metadata first, lazy full node/document fetch on click ---
+
+function highlightTerms(text, terms) {
+  let html = escapeHtml(text);
+  for (const term of (terms || []).filter(Boolean)) {
+    const pattern = new RegExp(escapeRegExp(escapeHtml(term)), "gi");
+    html = html.replace(pattern, (match) => `<mark>${match}</mark>`);
+  }
+  return html;
+}
 
 function renderResultsCount() {
   if (!state.documents.totalCount) {
     $("#resultsCount").textContent = "";
     return;
   }
-  const byModule = Object.entries(state.session.moduleCounts || {})
+  const byModule = Object.entries(state.documents.moduleCounts || {})
     .map(([module, count]) => `${module}:${count}`)
     .join(" ");
-  $("#resultsCount").textContent = `${state.documents.totalCount}건 (${byModule})`;
+  $("#resultsCount").textContent = `${state.documents.totalCount}건 ${byModule ? `(${byModule})` : ""}`;
 }
 
 function renderResultsList() {
@@ -266,7 +514,7 @@ function renderResultsList() {
   const docs = state.documents.data;
   if (!docs.length) {
     box.className = "results-list muted";
-    box.textContent = "No reports yet";
+    box.textContent = state.resultsMessage;
     $("#loadMore").hidden = true;
     return;
   }
@@ -274,52 +522,153 @@ function renderResultsList() {
   box.className = "results-list";
   box.innerHTML = "";
   for (const doc of docs) {
-    const card = document.createElement("div");
-    card.className = "result";
-    const snippet = (doc.content || "").slice(0, 220);
+    const card = document.createElement("article");
+    card.className = "result-card";
+    card.draggable = true;
+    const snippet = shortText(doc.content || "", 190);
+    const sourceLink = doc.source_url
+      ? `<a class="source-link" href="${escapeHtml(doc.source_url)}" target="_blank" rel="noreferrer">source</a>`
+      : "";
     card.innerHTML = `
       <div class="result-head">
-        <strong>${escapeHtml(doc.title)}</strong>
-        <span class="badge">${escapeHtml(doc.module.toUpperCase())}</span>
+        <strong>${escapeHtml(doc.title || "(untitled)")}</strong>
+        <span class="badge">${escapeHtml(String(doc.module || "").toUpperCase())}</span>
       </div>
-      <div class="result-meta muted">${escapeHtml(doc.forum_name || "-")} · ${escapeHtml(doc.timestamp || "-")}</div>
-      <p class="result-snippet">${highlightTerms(snippet, doc.matched_iocs)}${snippet.length === 220 ? "…" : ""}</p>
-      <div class="result-tags">${(doc.matched_iocs || []).map((v) => `<span class="tag">${escapeHtml(v)}</span>`).join("")}</div>
+      <div class="result-meta">${escapeHtml(doc.forum_name || "-")} · ${escapeHtml(doc.timestamp || "-")} · 클릭 시 노드 전문 조회 ${sourceLink}</div>
+      <p>${highlightTerms(snippet, doc.matched_iocs)}</p>
+      <div class="result-tags">${(doc.matched_iocs || []).map((value) => `<span>${escapeHtml(value)}</span>`).join("")}</div>
     `;
+    card.addEventListener("dragstart", (event) => setDrag(event, DRAG_NODE, makeNodePayload(doc)));
     card.addEventListener("click", () => openDocument(doc.id));
+    card.querySelectorAll("a").forEach((link) => link.addEventListener("click", (event) => event.stopPropagation()));
     box.appendChild(card);
   }
-  $("#loadMore").hidden = state.documents.cursor === null;
+  $("#loadMore").hidden = true;
 }
 
-async function loadDocuments({ reset = false } = {}) {
-  const cursor = reset ? 0 : state.documents.cursor || 0;
-  const params = new URLSearchParams({
-    module: state.filters.module,
-    sort: state.filters.sort,
-    cursor: String(cursor),
-    limit: "20"
-  });
-  const page = await api(`/api/sessions/${state.session.id}/documents?${params.toString()}`);
-  state.documents = reset ? page : { ...page, data: [...state.documents.data, ...page.data] };
+function clearSearchResults(message = "조회 결과 없음") {
+  state.resultsMessage = message;
+  state.documents = { allData: [], data: [], totalCount: 0, cursor: null, moduleCounts: {} };
   renderResultsList();
   renderResultsCount();
 }
 
-// --- Document viewer (M5a/M5b) ---
+function docsFromQueryResponse(queryResponse) {
+  const byId = new Map();
+  for (const result of queryResponse.results || []) {
+    for (const item of result.results || []) {
+      const id = `${result.module}:${item.id}`;
+      const existing = byId.get(id);
+      const matchedIocs = existing
+        ? Array.from(new Set([...existing.matched_iocs, result.query_ioc?.value].filter(Boolean)))
+        : [result.query_ioc?.value].filter(Boolean);
+      byId.set(id, {
+        id,
+        module: result.module,
+        query_ioc: result.query_ioc,
+        title: item.title,
+        content: item.content,
+        source_url: item.source_url,
+        timestamp: item.timestamp,
+        forum_name: item.forum_name,
+        author_alias: item.author_alias,
+        indicators_tagged: item.indicators_tagged,
+        raw_response: item.raw_response,
+        matched_iocs: matchedIocs
+      });
+    }
+  }
+  return Array.from(byId.values());
+}
 
-function buildHighlightHtml(text, iocSpans, semanticHighlights, mode) {
+function applyCurrentResultFilters() {
+  const docs = [...state.documents.allData];
+
+  const moduleCounts = {};
+  for (const doc of docs) {
+    moduleCounts[doc.module] = (moduleCounts[doc.module] || 0) + 1;
+  }
+
+  state.documents = {
+    ...state.documents,
+    data: docs,
+    totalCount: docs.length,
+    cursor: null,
+    moduleCounts
+  };
+  state.resultsMessage = state.documents.allData.length ? "현재 조회 결과 없음" : "조회 결과 없음";
+  renderResultsList();
+  renderResultsCount();
+}
+
+function setSearchResultsFromQuery(queryResponse) {
+  state.documents = {
+    allData: docsFromQueryResponse(queryResponse),
+    data: [],
+    totalCount: 0,
+    cursor: null,
+    moduleCounts: {}
+  };
+  applyCurrentResultFilters();
+}
+
+// --- Wallet graph ---
+
+function getWalletIocFromQuery(body) {
+  const iocs = Array.isArray(body.iocs) ? body.iocs : [];
+  const wallet = iocs.find(
+    (ioc) => ["btc_address", "eth_address"].includes(ioc.type) && String(ioc.value || "").trim()
+  );
+  if (wallet) return { type: wallet.type, value: String(wallet.value).trim() };
+
+  const directQuery = String(body.query || "").trim();
+  if (BTC_ADDRESS_PATTERN.test(directQuery)) {
+    return { type: "btc_address", value: directQuery };
+  }
+  if (ETH_ADDRESS_PATTERN.test(directQuery)) {
+    return { type: "eth_address", value: directQuery };
+  }
+  return null;
+}
+
+function clearWalletGraph() {
+  state.walletGraph = null;
+  if (window.WalletGraph) window.WalletGraph.clear($("#walletGraph"));
+}
+
+function renderWalletGraphForQuery(walletIoc, queryResponse, options = {}) {
+  if (!window.WalletGraph || !walletIoc) return;
+  const walletResults = (queryResponse.results || []).filter(
+    (result) =>
+      result.query_ioc?.type === walletIoc.type &&
+      String(result.query_ioc.value || "").toLowerCase() === walletIoc.value.toLowerCase()
+  );
+  const graph = window.WalletGraph.build(walletIoc.value, walletResults);
+  graph.expanded = Boolean(options.expanded);
+  state.walletGraph = graph;
+  window.WalletGraph.render($("#walletGraph"), graph, {
+    onAddressClick: (address, type) => {
+      submitQuery({ iocs: [{ type, value: address }] }, { expandWalletGraph: true }).catch((error) =>
+        alert(`조회 실패: ${error.message}`)
+      );
+    }
+  });
+}
+
+// --- Viewer ---
+
+function buildHighlightHtml(text, iocSpans, semanticHighlights) {
   const boundaries = new Set([0, text.length]);
   const spans = [];
 
-  if (mode === "ioc" || mode === "all") {
-    for (const ioc of iocSpans || []) {
-      boundaries.add(ioc.offset.start);
-      boundaries.add(ioc.offset.end);
-      spans.push({ start: ioc.offset.start, end: ioc.offset.end, kind: "ioc", type: ioc.type, value: ioc.value });
-    }
+  for (const ioc of iocSpans || []) {
+    if (!ioc.offset) continue;
+    boundaries.add(ioc.offset.start);
+    boundaries.add(ioc.offset.end);
+    spans.push({ start: ioc.offset.start, end: ioc.offset.end, kind: "ioc", type: ioc.type, value: ioc.value });
   }
-  if ((mode === "semantic" || mode === "all") && semanticHighlights) {
+
+  if (semanticHighlights) {
     for (const highlight of semanticHighlights) {
       boundaries.add(highlight.offset.start);
       boundaries.add(highlight.offset.end);
@@ -340,90 +689,178 @@ function buildHighlightHtml(text, iocSpans, semanticHighlights, mode) {
     const segEnd = sorted[i + 1];
     if (segStart >= segEnd) continue;
     const segText = escapeHtml(text.slice(segStart, segEnd));
-    const covering = spans.filter((s) => s.start <= segStart && s.end >= segEnd);
+    const covering = spans.filter((span) => span.start <= segStart && span.end >= segEnd);
     if (!covering.length) {
       html += segText;
       continue;
     }
+
     const classes = covering
-      .map((c) => (c.kind === "ioc" ? `hl-ioc ${IOC_COLOR_CLASS[c.type] || "ioc-generic"}` : `hl-semantic semantic-${c.category}`))
+      .map((span) =>
+        span.kind === "ioc"
+          ? `hl-ioc ${chipClass(span.type)}`
+          : `hl-semantic semantic-${span.category || "technique"}`
+      )
       .join(" ");
-    const iocSpan = covering.find((c) => c.kind === "ioc");
+    const iocSpan = covering.find((span) => span.kind === "ioc");
     const title = covering
-      .map((c) => (c.kind === "ioc" ? `${c.type}: ${c.value}` : `${c.category}: ${c.rationale}`))
+      .map((span) => (span.kind === "ioc" ? `${span.type}: ${span.value}` : `${span.category}: ${span.rationale}`))
       .join(" | ");
-    const dataAttrs = iocSpan ? `data-ioc-type="${escapeHtml(iocSpan.type)}" data-ioc-value="${escapeHtml(iocSpan.value)}"` : "";
+    const dataAttrs = iocSpan
+      ? `data-ioc-type="${escapeHtml(iocSpan.type)}" data-ioc-value="${escapeHtml(iocSpan.value)}"`
+      : "";
     html += `<span class="hl ${classes}" title="${escapeHtml(title)}" ${dataAttrs}>${segText}</span>`;
   }
   return html;
 }
 
-function renderDocumentViewer() {
-  const doc = state.currentDoc;
-  if (!doc) {
-    $("#docTitle").textContent = "문서를 선택하세요";
+function renderViewer() {
+  const view = state.currentView;
+  if (!view) {
+    $("#docTitle").textContent = "분석 근거 자료를 투입하세요";
     $("#docMeta").textContent = "";
-    $("#document").textContent = "왼쪽 목록에서 문서를 클릭하면 여기에 표시됩니다.";
+    $("#document").textContent = "오른쪽 검색 위젯에 로그/문서/메모를 넣으면 IOC 후보가 색상별로 하이라이트됩니다.";
+    renderCurrentNodeAction();
     return;
   }
-  $("#docTitle").textContent = doc.title;
-  $("#docMeta").textContent = `${doc.module.toUpperCase()} · ${doc.forum_name || "-"} · ${doc.timestamp || "-"}${doc.source_url ? " · " + doc.source_url : ""}`;
-  $("#document").innerHTML = buildHighlightHtml(doc.content || "", doc.iocSpans, state.semanticHighlights, state.highlightMode);
+
+  $("#docTitle").textContent = view.title;
+  $("#docMeta").textContent = view.meta || "";
+  $("#document").innerHTML = buildHighlightHtml(
+    view.content || "",
+    view.iocSpans || [],
+    state.semanticEnabled ? state.semanticHighlights : null
+  );
+  renderCurrentNodeAction();
 }
 
 async function openDocument(docId) {
-  const doc = await api(`/api/sessions/${state.session.id}/documents/${encodeURIComponent(docId)}`);
-  state.currentDoc = doc;
-  state.semanticHighlights = null;
-  renderDocumentViewer();
-  if (state.highlightMode === "semantic" || state.highlightMode === "all") {
-    await loadSemanticHighlights();
+  setViewerLoading(true, "노드 전문 조회 중...");
+  try {
+    const doc = await api(`/api/sessions/${state.session.id}/documents/${encodeURIComponent(docId)}`);
+    state.currentDoc = doc;
+    state.currentNode = makeNodePayload(doc);
+    state.semanticHighlights = null;
+    state.currentView = {
+      kind: "document",
+      title: doc.title || "(untitled)",
+      meta: `${String(doc.module || "").toUpperCase()} · ${doc.forum_name || "-"} · ${doc.timestamp || "-"}`,
+      content: doc.content || "",
+      iocSpans: doc.iocSpans || []
+    };
+    renderViewer();
+    if (state.semanticEnabled) {
+      await loadSemanticHighlights();
+    }
+  } finally {
+    setViewerLoading(false);
   }
+}
+
+async function openInterestNode(node) {
+  if (node.kind === "evidence") {
+    state.currentDoc = null;
+    state.currentNode = node;
+    state.semanticHighlights = node.semanticHighlights || null;
+    state.currentView = {
+      kind: "source",
+      title: node.title || "분석 근거 자료",
+      meta: node.meta || "",
+      content: node.content || "",
+      iocSpans: node.iocSpans || []
+    };
+    clearWalletGraph();
+    renderViewer();
+    if (state.semanticEnabled && !state.semanticHighlights) {
+      await loadSemanticHighlights();
+    }
+    return;
+  }
+  await openDocument(node.id);
+}
+
+function addCurrentNodeToInterest() {
+  if (!state.currentNode) return;
+  addInterestNode(state.currentNode);
 }
 
 async function loadSemanticHighlights() {
-  if (!state.currentDoc) return;
-  const data = await api(`/api/sessions/${state.session.id}/documents/${encodeURIComponent(state.currentDoc.id)}/semantic`);
-  state.semanticHighlights = data.highlights;
-  renderDocumentViewer();
-}
-
-async function setHighlightMode(mode) {
-  state.highlightMode = mode;
-  document.querySelectorAll(".hl-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
-  if ((mode === "semantic" || mode === "all") && state.currentDoc && !state.semanticHighlights) {
-    await loadSemanticHighlights();
-  } else {
-    renderDocumentViewer();
+  if (!state.currentView || !state.semanticEnabled) return;
+  setViewerLoading(true, state.llmEnabled ? "OpenAI 의미 하이라이트 분석 중..." : "의미 하이라이트 확인 중...");
+  try {
+    const data = state.currentDoc
+      ? await api(`/api/sessions/${state.session.id}/documents/${encodeURIComponent(state.currentDoc.id)}/semantic`)
+      : await api(`/api/sessions/${state.session.id}/semantic`, {
+          method: "POST",
+          body: JSON.stringify({ text: state.currentView.content || "" })
+        });
+    state.semanticHighlights = data.highlights;
+    if (state.currentNode) {
+      state.currentNode.semanticHighlights = data.highlights;
+      for (const node of state.interestNodes) {
+        if (nodeKey(node) === nodeKey(state.currentNode)) node.semanticHighlights = data.highlights;
+      }
+    }
+    renderViewer();
+  } finally {
+    setViewerLoading(false);
   }
 }
 
-// --- Search (manual form, IOC chip click, IOC click-in-doc, drag-to-search) ---
-
-// IOC-typed search: used by IOC chip clicks, in-document IOC clicks, and
-// drag-to-search. Auto-routes across StealthMole modules via the IOC type.
-async function runSearch(value, iocType) {
-  const query = String(value || "").trim();
-  if (!query || !state.session) return;
-  await submitQuery(iocType ? { iocs: [{ type: iocType, value: query }] } : { query });
+async function setSemanticEnabled(enabled) {
+  state.semanticEnabled = enabled && state.llmEnabled;
+  const toggle = $("#semanticToggle");
+  if (toggle) toggle.checked = state.semanticEnabled;
+  renderSemanticToggleStatus();
+  if (state.semanticEnabled && state.currentView && !state.semanticHighlights) {
+    await loadSemanticHighlights();
+  } else {
+    renderViewer();
+  }
 }
 
-// Manual search form: user picked a specific StealthMole module directly,
-// bypassing the IOC-type routing table.
-async function runModuleSearch(value, module) {
-  const query = String(value || "").trim();
-  if (!query || !state.session) return;
-  await submitQuery(module ? { module, query } : { query });
+async function submitQuery(body, options = {}) {
+  const walletIoc = getWalletIocFromQuery(body);
+  clearSearchResults("조회 중...");
+  setViewerLoading(true, "검색 결과 조회 중...");
+  try {
+    const queryResponse = await api(`/api/sessions/${state.session.id}/query`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    });
+    state.session = await api(`/api/sessions/${state.session.id}`);
+    renderInterestIocs();
+    setSearchResultsFromQuery(queryResponse);
+    if (walletIoc) {
+      renderWalletGraphForQuery(walletIoc, queryResponse, { expanded: options.expandWalletGraph });
+    } else {
+      clearWalletGraph();
+    }
+  } catch (error) {
+    clearSearchResults(`조회 실패: ${error.message}`);
+    throw error;
+  } finally {
+    setViewerLoading(false);
+  }
 }
 
-async function submitQuery(body) {
-  await api(`/api/sessions/${state.session.id}/query`, {
-    method: "POST",
-    body: JSON.stringify(body)
-  });
-  state.session = await api(`/api/sessions/${state.session.id}`);
-  renderIocs();
-  await loadDocuments({ reset: true });
+// --- Quota / boot ---
+
+async function refreshQuotas() {
+  try {
+    const quotas = await api("/api/quotas");
+    const entries = Object.entries(quotas);
+    const box = $("#quotaList");
+    if (!entries.length) {
+      box.className = "quota-list muted";
+      box.textContent = "-";
+      return;
+    }
+    box.className = "quota-list";
+    box.innerHTML = entries.map(([module, q]) => `<div>${escapeHtml(module)}: ${q.used}/${q.allowed}</div>`).join("");
+  } catch {
+    // Best-effort display.
+  }
 }
 
 function hideSelectionMenu() {
@@ -431,64 +868,45 @@ function hideSelectionMenu() {
 }
 
 function boot() {
-  $("#analyze").addEventListener("click", analyze);
+  makeSearchPanelDropTarget($("#searchPanel"));
 
-  $("#dropzone").addEventListener("click", () => $("#files").click());
-  $("#dropzone").addEventListener("dragover", (event) => {
+  $("#sourceDropzone").addEventListener("click", () => $("#files").click());
+  $("#sourceDropzone").addEventListener("dragover", (event) => {
     event.preventDefault();
-    $("#dropzone").classList.add("drag-over");
+    event.stopPropagation();
+    $("#sourceDropzone").classList.add("drag-over");
   });
-  $("#dropzone").addEventListener("dragleave", () => $("#dropzone").classList.remove("drag-over"));
-  $("#dropzone").addEventListener("drop", (event) => {
+  $("#sourceDropzone").addEventListener("dragleave", () => $("#sourceDropzone").classList.remove("drag-over"));
+  $("#sourceDropzone").addEventListener("drop", (event) => {
     event.preventDefault();
-    $("#dropzone").classList.remove("drag-over");
+    event.stopPropagation();
+    $("#sourceDropzone").classList.remove("drag-over");
     addFiles(event.dataTransfer.files);
   });
   $("#files").addEventListener("change", (event) => addFiles(event.target.files));
+  $("#analyze").addEventListener("click", analyzeSources);
 
-  $("#stageTray").addEventListener("dragover", (event) => {
-    event.preventDefault();
-    $("#stageTray").classList.add("drag-over");
-  });
-  $("#stageTray").addEventListener("dragleave", () => $("#stageTray").classList.remove("drag-over"));
-  $("#stageTray").addEventListener("drop", (event) => {
-    event.preventDefault();
-    $("#stageTray").classList.remove("drag-over");
-    const raw = event.dataTransfer.getData("application/json");
-    if (!raw) return;
-    try {
-      stageIoc(JSON.parse(raw));
-    } catch {
-      // ignore malformed drag payloads
-    }
-  });
+  makeDropTarget($("#stageTray"), DRAG_IOC, stageIoc);
+  makeDropTarget($("#interestIocList"), DRAG_IOC, addInterestIoc);
+  makeDropTarget($("#interestNodeList"), DRAG_NODE, addInterestNode);
   $("#runQueryBtn").addEventListener("click", runStagedQuery);
 
-  $("#searchForm").addEventListener("submit", (event) => {
+  $("#keywordForm").addEventListener("submit", (event) => {
     event.preventDefault();
-    const service = $("#service").value;
-    const query = $("#query").value;
-    runModuleSearch(query, service || undefined);
+    runKeywordSearch().catch((error) => alert(`검색 실패: ${error.message}`));
   });
 
-  $("#moduleFilter").addEventListener("change", (event) => {
-    state.filters.module = event.target.value;
-    loadDocuments({ reset: true });
-  });
-  $("#sortOrder").addEventListener("change", (event) => {
-    state.filters.sort = event.target.value;
-    loadDocuments({ reset: true });
-  });
-  $("#loadMore").addEventListener("click", () => loadDocuments({ reset: false }));
+  $("#loadMore").addEventListener("click", () => applyCurrentResultFilters());
 
-  document.querySelectorAll(".hl-btn").forEach((btn) => {
-    btn.addEventListener("click", () => setHighlightMode(btn.dataset.mode));
+  $("#semanticToggle").addEventListener("change", (event) => {
+    setSemanticEnabled(event.target.checked).catch((error) => alert(`LLM 하이라이팅 실패: ${error.message}`));
   });
+  $("#addCurrentNodeBtn").addEventListener("click", addCurrentNodeToInterest);
 
   $("#document").addEventListener("click", (event) => {
     const target = event.target.closest(".hl-ioc");
     if (!target) return;
-    runSearch(target.dataset.iocValue, target.dataset.iocType);
+    addInterestIoc({ type: target.dataset.iocType, value: target.dataset.iocValue });
   });
 
   $("#document").addEventListener("mouseup", (event) => {
@@ -502,7 +920,7 @@ function boot() {
     menu.style.left = `${event.pageX}px`;
     menu.style.top = `${event.pageY + 10}px`;
     $("#selectionSearchBtn").onclick = () => {
-      runSearch(text);
+      $("#query").value = text;
       hideSelectionMenu();
     };
   });
@@ -515,16 +933,22 @@ function boot() {
 
 async function init() {
   const health = await api("/api/health");
-  $("#mode").textContent = `StealthMole: ${health.stealthmoleMock ? "mock" : "live"} · LLM: ${health.llmEnabled ? "on" : "off"}`;
-
+  state.llmEnabled = health.llmEnabled;
+  state.semanticEnabled = health.llmEnabled;
+  $("#semanticToggle").checked = state.semanticEnabled;
+  $("#semanticToggle").disabled = !health.llmEnabled;
+  renderSemanticToggleStatus();
+  $("#mode").textContent = `StealthMole: ${health.stealthmoleMock ? "mock" : "live"} · LLM: ${
+    health.llmEnabled ? "on" : "off"
+  }`;
   state.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "New incident" }) });
-  $("#title").textContent = state.session.title;
-  renderChatThread();
-  renderIocs();
-  renderEntities();
+  renderPendingFiles();
+  renderInterestIocs();
+  renderInterestNodes();
   renderStageTray();
+  renderViewer();
   await refreshQuotas();
-  await loadDocuments({ reset: true });
+  clearSearchResults();
 }
 
 boot();

@@ -8,34 +8,93 @@
   </head>
   <body>
     <main class="shell">
-      <aside class="rail">
-        <h1>D4D CTI</h1>
-        <p id="mode" class="muted">mode: checking</p>
-
-        <section>
-          <h2>IOC</h2>
-          <div id="iocList" class="chips muted">No IOC</div>
+      <aside class="left-panel">
+        <section class="brand">
+          <h1>D4D CTI</h1>
+          <p id="mode" class="muted">mode: checking</p>
         </section>
 
-        <section>
-          <h2>Entity (LLM)</h2>
-          <div id="entityList" class="muted">No entity</div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>관심 IOC</h2>
+            <span id="interestIocCount" class="count">0</span>
+          </div>
+          <div id="interestIocList" class="watch-list muted">가운데 뷰어의 IOC 하이라이트를 클릭해서 등록</div>
         </section>
 
-        <section>
-          <h2>Quota</h2>
-          <div id="quotaList" class="muted">-</div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>관심 Node</h2>
+            <span id="interestNodeCount" class="count">0</span>
+          </div>
+          <div id="interestNodeList" class="watch-list drop-target muted">오른쪽 검색 결과를 드래그해서 등록</div>
+        </section>
+
+        <section class="panel compact">
+          <div class="panel-head">
+            <h2>LLM 하이라이팅</h2>
+            <label class="switch" title="LLM 의미론적 밑줄 표시">
+              <input id="semanticToggle" type="checkbox" checked />
+              <span></span>
+            </label>
+          </div>
+          <div id="semanticToggleStatus" class="toggle-status muted">의미 구절 밑줄 표시</div>
+        </section>
+
+        <section class="panel compact">
+          <div class="panel-head">
+            <h2>Quota</h2>
+          </div>
+          <div id="quotaList" class="quota-list muted">-</div>
         </section>
       </aside>
 
-      <section class="workspace">
-        <header>
+      <section class="viewer-panel">
+        <header class="viewer-header">
           <div>
-            <span>CTI analysis session</span>
-            <h2 id="title">New incident</h2>
+            <span class="eyebrow">Node / document viewer</span>
+            <h2 id="docTitle">분석 근거 자료를 투입하세요</h2>
           </div>
-          <form id="searchForm" class="search">
-            <select id="service">
+          <div class="viewer-actions">
+            <button
+              id="addCurrentNodeBtn"
+              class="secondary viewer-action icon-button"
+              type="button"
+              title="관심 노드 추가"
+              aria-label="관심 노드 추가"
+              disabled
+            >+</button>
+          </div>
+        </header>
+
+        <section id="walletGraph" class="wallet-graph-panel" hidden></section>
+        <div id="docMeta" class="doc-meta muted"></div>
+        <pre id="document" class="document-viewer">오른쪽 검색 위젯에 로그/문서/메모를 넣으면 IOC 후보가 색상별로 하이라이트됩니다.</pre>
+        <div id="viewerLoading" class="viewer-loading" hidden>
+          <div class="loader"></div>
+          <strong id="viewerLoadingText">처리 중...</strong>
+        </div>
+      </section>
+
+      <aside class="right-panel">
+        <section id="searchPanel" class="panel search-panel">
+          <div class="panel-head">
+            <h2>통합 검색</h2>
+          </div>
+
+          <div id="sourceDropzone" class="dropzone">
+            <strong>분석 근거 자료</strong>
+            <span>파일은 이 영역 또는 통합 검색 위젯 어디든 드롭</span>
+          </div>
+          <input id="files" type="file" multiple hidden />
+          <textarea id="message" placeholder="로그, 노트, 원문 텍스트를 붙여넣기"></textarea>
+          <div class="actions">
+            <div id="pendingFiles" class="muted">첨부 파일 없음</div>
+            <button id="analyze" type="button">자료 제출</button>
+          </div>
+
+          <form id="keywordForm" class="keyword-form">
+            <select id="service" aria-label="StealthMole module">
               <option value="">auto</option>
               <option value="tt">TT</option>
               <option value="cl">CL</option>
@@ -45,74 +104,33 @@
               <option value="gm">GM</option>
               <option value="lm">LM</option>
             </select>
-            <input id="query" placeholder="IOC or keyword" />
-            <button>Search</button>
+            <input id="query" placeholder="직접 키워드 또는 IOC 입력" />
+            <button id="keywordSearchBtn" type="submit">검색</button>
           </form>
-        </header>
 
-        <section class="intake">
-          <div id="chatThread" class="chat-thread muted">아직 업로드된 내용이 없습니다.</div>
-          <div id="dropzone" class="dropzone">여기로 파일을 드래그하거나 클릭하여 업로드 (.log .txt .csv .json .eml)</div>
-          <input id="files" type="file" multiple hidden />
-          <textarea id="message" placeholder="침해사고 로그, 노트, 텍스트를 붙여넣으세요"></textarea>
-          <div class="actions">
-            <div id="pendingFiles" class="muted">첨부 파일 없음</div>
-            <button id="analyze">분석 시작</button>
+          <div class="queue-block">
+            <div class="queue-head">
+              <div class="queue-label">API 조회 대기열</div>
+              <button id="runQueryBtn" class="secondary" type="button" disabled>조회 실행</button>
+            </div>
+            <div id="stageTray" class="stage-tray drop-target muted">관심 IOC를 여기로 드래그</div>
+            <div class="queue-help muted">관심 IOC는 이 위젯 어디에 드롭해도 대기열에 추가됩니다.</div>
           </div>
         </section>
 
-        <section class="stage">
-          <div class="stage-header">
-            <h2>StealthMole 조회 대기열</h2>
-            <button id="runQueryBtn" disabled>StealthMole 조회 실행</button>
-          </div>
-          <div id="stageTray" class="stage-tray muted">왼쪽 IOC 칩을 여기로 드래그하세요</div>
+        <section class="panel results-panel">
+          <div id="resultsCount" class="muted"></div>
+          <div id="resultsList" class="results-list muted">조회 결과 없음</div>
+          <button id="loadMore" class="load-more" type="button" hidden>더 보기</button>
         </section>
-
-        <section class="split">
-          <article class="results-panel">
-            <div class="results-toolbar">
-              <select id="moduleFilter">
-                <option value="">전체 모듈</option>
-                <option value="tt">TT</option>
-                <option value="cl">CL</option>
-                <option value="cb">CB</option>
-                <option value="cds">CDS</option>
-                <option value="rm">RM</option>
-                <option value="gm">GM</option>
-                <option value="lm">LM</option>
-              </select>
-              <select id="sortOrder">
-                <option value="recent">최신순</option>
-                <option value="source">출처별</option>
-              </select>
-              <span id="resultsCount" class="muted"></span>
-            </div>
-            <div id="resultsList" class="results-list muted">No reports</div>
-            <button id="loadMore" class="load-more" hidden>더 보기</button>
-          </article>
-
-          <article class="viewer-panel">
-            <div class="viewer-toolbar">
-              <h2 id="docTitle">문서를 선택하세요</h2>
-              <div class="highlight-toggle">
-                <button data-mode="ioc" class="hl-btn active">IOC</button>
-                <button data-mode="semantic" class="hl-btn">의미론적</button>
-                <button data-mode="all" class="hl-btn">전체</button>
-                <button data-mode="off" class="hl-btn">끄기</button>
-              </div>
-            </div>
-            <div id="docMeta" class="muted"></div>
-            <pre id="document">왼쪽 목록에서 문서를 클릭하면 여기에 표시됩니다.</pre>
-          </article>
-        </section>
-      </section>
+      </aside>
     </main>
 
     <div id="selectionMenu" class="selection-menu" hidden>
-      <button id="selectionSearchBtn" type="button">이 키워드로 검색</button>
+      <button id="selectionSearchBtn" type="button">선택어 검색</button>
     </div>
 
+    <script src="/walletGraph.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

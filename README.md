@@ -1,20 +1,47 @@
-# D4D CTI Base
+# D4D T2 OSINT CTI Workbench
 
-First-share scaffold for a Node.js CTI workbench.
+Hackathon-oriented local CTI workbench for incident evidence intake, IOC extraction,
+StealthMole OSINT lookup, OpenAI-assisted semantic highlighting, and wallet-focused
+graph exploration.
 
-The important project guide is [AGENTS.md](./AGENTS.md).
+This repository intentionally stays lightweight: plain Node.js, static files, no build
+step, no frontend framework, no database. The goal is a shareable analyst workbench
+that teammates can read, run, and extend quickly.
 
-## What Is Included
+## What The App Does
 
-- Minimal Node.js HTTP server
-- Static web UI in `public/`
-- Incident text/file intake
-- Basic IOC extraction
-- StealthMole search proxy shape
-- Mock mode for sharing before API keys are available
-- Placeholder areas for reports, highlights, and entity resolution
+- Accepts analyst evidence text and local files through the right-side search panel.
+- Extracts IOC candidates with deterministic regex rules and optional OpenAI assistance.
+- Highlights extracted IOCs in the center viewer by IOC type.
+- Lets analysts click IOC highlights to add only selected IOCs to the left-side interest list.
+- Lets analysts drag interest IOCs into an API lookup queue, then run StealthMole lookups.
+- Lists only the latest lookup response in the right-side results panel.
+- Lazily opens full node/document detail only when a result is clicked.
+- Lets analysts maintain a separate interest Node list, rename those nodes, and reopen them.
+- Adds submitted evidence automatically to the interest Node list.
+- Shows OpenAI semantic highlights as underlines when `OPENAI_API_KEY` is configured.
+- Shows a wallet graph only for selected Bitcoin/Ethereum wallet IOC searches.
+- Supports dragging wallet graph nodes into the interest IOC list.
 
-## Run
+## Current UI Layout
+
+The first screen is the workbench, not a landing page.
+
+- Left: interest IOC list, interest Node list, LLM highlight toggle, quota display.
+- Center: one active node/document/evidence viewer, semantic underline rendering, optional wallet graph.
+- Right: evidence submission, direct keyword/module search, IOC lookup queue, current search results.
+
+Important interaction details:
+
+- IOC candidates are not automatically queried.
+- Analyst evidence is submitted with `자료 제출`.
+- Submitted evidence is automatically registered as an interest Node.
+- Search results are cleared every time a new unified search or IOC queue lookup starts.
+- Clicking a result opens its full detail in the center viewer.
+- The center viewer can add the currently displayed node to interest Nodes with the `+` button.
+- Interest Nodes can be renamed from the left widget with the pen icon.
+
+## Quick Start
 
 ```bash
 cp .env.example .env
@@ -27,36 +54,184 @@ Open:
 http://localhost:3000
 ```
 
-Node.js 18 or later is expected. This base currently has no external npm dependencies.
+The server binds to `HOST` from `.env`; the current code defaults to `0.0.0.0` so the
+app can be reached from other devices on the same network when the firewall allows it.
 
-## Live StealthMole Mode
+Node.js 18 or later is expected. There are no runtime npm dependencies.
 
-Set `.env`:
+## Environment
+
+Use `.env` locally. Never commit real keys.
 
 ```bash
-STEALTHMOLE_ACCESS_KEY=...
-STEALTHMOLE_SECRET_KEY=...
-STEALTHMOLE_MOCK=false
+PORT=3000
+HOST=0.0.0.0
+
+STEALTHMOLE_BASE_URL=https://hackathon.stealthmole.com
+STEALTHMOLE_ACCESS_KEY=
+STEALTHMOLE_SECRET_KEY=
+STEALTHMOLE_MOCK=true
+
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
 ```
 
-When keys are missing or `STEALTHMOLE_MOCK=true`, the server uses mock responses.
+Behavior:
 
-## Files
+- If StealthMole keys are empty, or `STEALTHMOLE_MOCK=true`, search and quota calls use synthetic mock data.
+- If `STEALTHMOLE_MOCK=false` and both StealthMole keys are present, the server uses the live API.
+- If `OPENAI_API_KEY` is empty, LLM IOC extraction and semantic highlighting no-op gracefully.
+- `.env` is ignored by git and should remain local.
+
+## StealthMole Integration
+
+All StealthMole calls are server-side. Keys are never exposed to the browser.
+
+Implemented live lookup behavior:
+
+- Fresh HS256 JWT per request with `access_key`, `nonce`, and `iat`.
+- In-memory cache keyed by module/query.
+- Serialized throttled requests to reduce accidental API pressure.
+- Quota display through `/user/quotas`.
+- Sync module support: `cl`, `cb`, `cds`, `rm`, `gm`, `lm`.
+- Async Telegram Tracker support: `tt`.
+- `dt`, `ub`, and `cdf` are intentionally excluded from the current IOC-to-node workflow.
+
+Current automatic IOC routing:
+
+| IOC type | Route |
+| --- | --- |
+| `ipv4` | `cds` query `ip:<value>` |
+| `domain` | `cl`, `cds`, `rm` query `domain:<value>` |
+| `url` | `cds` query `url:<value>` |
+| `email` | `cl`, `cds` query `email:<value>` |
+| `md5`, `sha1`, `sha256` | `tt` indicator `hash` |
+| `btc_address` | `tt` indicator `bitcoin` plus wallet graph |
+| `eth_address` | `tt` indicator `ethereum` plus wallet graph |
+| `telegram` | `tt` indicator `telegram` |
+| `cve` | `tt` indicator `cve` |
+| `discord_id` | `tt` indicator `discord` |
+| `keyword` | `tt` keyword plus `rm`, `gm`, `lm` plain query |
+
+Manual module search from the right panel bypasses this routing table and calls the selected module directly.
+
+## LLM Integration
+
+OpenAI calls use the Chat Completions API directly through `fetch`; no SDK dependency is added.
+
+LLM-enabled paths:
+
+- `server/llmIocExtractor.js`: optional semantic IOC/entity extraction during evidence submission.
+- `server/semanticHighlighter.js`: semantic underline extraction for viewer text.
+- `POST /api/sessions/:id/semantic`: semantic highlights for submitted evidence currently shown in the viewer.
+- `GET /api/sessions/:id/documents/:docId/semantic`: semantic highlights for opened search-result documents.
+
+Semantic highlights are returned as offset ranges:
+
+```json
+{
+  "enabled": true,
+  "highlights": [
+    {
+      "category": "technique",
+      "text": "CVE-2023-34362 MOVEit Transfer exploitation",
+      "offset": { "start": 120, "end": 166 },
+      "rationale": "..."
+    }
+  ]
+}
+```
+
+The browser renders these as underlines over the existing document text. IOC highlights and semantic highlights can overlap.
+
+## Wallet Graph
+
+Wallet graph code lives in `public/walletGraph.js`.
+
+Behavior:
+
+- Enabled only when the active query is a Bitcoin or Ethereum wallet IOC.
+- Initially renders only the selected wallet address.
+- Clicking the selected wallet reveals up to five linked wallet addresses found in current results.
+- Dragging a wallet node to the interest IOC list registers it as an IOC.
+- Clicking a linked wallet starts a new wallet lookup for that address.
+- Nodes show only the first five address characters.
+- Node explorer button links to `mempool.space` for Bitcoin and `etherscan.io` for Ethereum.
+
+The graph is intentionally simple and data-light. It is a hackathon visualization aid, not a blockchain analytics engine.
+
+## Project Files
 
 ```text
-AGENTS.md                    Project rules for future agents and teammates
-server/config.js             Environment loader
-server/index.js              HTTP server and API routing
-server/sessions.js           In-memory session/document store
-server/iocExtractor.js       Regex-based IOC extraction + defanging (M2a)
-server/llmClient.js          OpenAI API wrapper
-server/llmIocExtractor.js    LLM-assisted IOC + entity extraction (M2b)
-server/semanticHighlighter.js LLM document highlighting (M5b)
-server/stealthmoleClient.js  StealthMole JWT auth, routing, cache, search (M3)
-public/index.html            UI shell (chat intake, results list, document viewer)
-public/app.js                Browser-side interactions
-public/styles.css            Workbench styling incl. IOC/semantic highlight colors
+AGENTS.md                     Project rules and implementation notes for future agents
+CTI_개발_마일스톤.md           Milestone plan
+StealthMole_API_MANUAL_KR.md  Local StealthMole API manual copy
+package.json                  Node scripts and engine hint
+
+server/config.js              .env loader and runtime config
+server/index.js               HTTP server, static serving, API routes
+server/sessions.js            In-memory session/document/query store
+server/iocExtractor.js        Regex IOC extraction and defanging
+server/llmClient.js           Thin OpenAI Chat Completions wrapper
+server/llmIocExtractor.js     LLM-assisted IOC/entity extraction
+server/semanticHighlighter.js LLM semantic underline extraction
+server/stealthmoleClient.js   StealthMole auth, routing, cache, normalization
+
+public/index.html             Workbench shell
+public/app.js                 Browser state, drag/drop, viewer, search orchestration
+public/styles.css             Dark analyst UI and highlight styling
+public/walletGraph.js         Wallet-specific graph visualization
 ```
 
-See [CTI_개발_마일스톤.md](./CTI_개발_마일스톤.md) for the full milestone plan;
-M1-M5 are implemented, M6 (entity resolution) and M7 (graph/dashboard) are not yet.
+## Useful Checks
+
+There is no formal test suite yet. For now, run syntax checks on touched JavaScript:
+
+```bash
+node --check server/index.js
+node --check server/stealthmoleClient.js
+node --check public/app.js
+node --check public/walletGraph.js
+```
+
+Health check after starting the server:
+
+```text
+GET http://localhost:3000/api/health
+```
+
+Expected live response shape:
+
+```json
+{
+  "ok": true,
+  "stealthmoleMock": false,
+  "llmEnabled": true
+}
+```
+
+## Security Notes
+
+- Never commit `.env`, real API keys, JWTs, incident files, or private customer data.
+- Do not log full JWTs, raw secrets, or full credential leak passwords.
+- The current UI intentionally displays `password=present` rather than secret values in normalized result snippets.
+- Raw uploads are not persisted to disk; current state is in-memory and resets on server restart.
+- Live StealthMole requests can consume quota. Keep limits low during probes.
+
+## Known Limitations
+
+- No database or durable session storage.
+- No user authentication.
+- No queue system.
+- No formal test suite.
+- `cdf` file-download workflows are not integrated into the current viewer.
+- TT node detail is fetched lazily only when a result is opened.
+- Wallet graph links depend on wallets appearing in normalized result text or raw response fields.
+
+## Suggested Next Work
+
+1. Add a small persistence layer for incidents, selected IOCs, and renamed Nodes.
+2. Add a real test harness for extractor, StealthMole normalization, and frontend state transitions.
+3. Add explicit `cdf` file search/download workflow if the demo scope needs file evidence.
+4. Improve TT node detail extraction for channel/message/user variants.
+5. Add entity resolution once the desired M6 model is clearer.
