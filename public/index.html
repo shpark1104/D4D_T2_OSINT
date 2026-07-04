@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>D4D CTI Base</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="rail">
+        <h1>D4D CTI</h1>
+        <p id="mode">mode: checking</p>
+
+        <section>
+          <h2>IOC</h2>
+          <div id="iocList" class="chips muted">No IOC</div>
+        </section>
+
+        <section>
+          <h2>Entity</h2>
+          <div id="entityList" class="muted">Placeholder</div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header>
+          <div>
+            <span>CTI analysis session</span>
+            <h2 id="title">New incident</h2>
+          </div>
+          <form id="searchForm" class="search">
+            <select id="service">
+              <option value="cds">CDS</option>
+              <option value="cl">CL</option>
+              <option value="cb">CB</option>
+              <option value="tt">TT</option>
+              <option value="cdf">CDF</option>
+              <option value="gm">GM</option>
+              <option value="lm">LM</option>
+              <option value="rm">RM</option>
+            </select>
+            <input id="query" placeholder="IOC or keyword" />
+            <button>Search</button>
+          </form>
+        </header>
+
+        <section class="intake">
+          <textarea id="message" placeholder="Paste incident logs, notes, or file text"></textarea>
+          <div class="actions">
+            <input id="files" type="file" multiple />
+            <button id="analyze">Analyze</button>
+          </div>
+        </section>
+
+        <section class="split">
+          <article>
+            <h2>Document</h2>
+            <pre id="document">No document</pre>
+          </article>
+          <article>
+            <h2>Reports</h2>
+            <div id="results" class="muted">No reports</div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
