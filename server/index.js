@@ -39,6 +39,7 @@ function serializeSession(session) {
   for (const doc of session.documents.values()) {
     moduleCounts[doc.module] = (moduleCounts[doc.module] || 0) + 1;
   }
+  const sourceDocuments = sessionsStore.listSourceDocuments(session).map(({ content, ...doc }) => doc);
   return {
     id: session.id,
     title: session.title,
@@ -46,6 +47,8 @@ function serializeSession(session) {
     messages: session.messages,
     iocs: session.iocs.map((ioc) => ({ ...ioc, queried: sessionsStore.isQueried(session, ioc) })),
     entities: session.entities,
+    sourceDocuments,
+    relationships: sessionsStore.listRelationships(session),
     documentCount: session.documents.size,
     moduleCounts
   };
@@ -83,8 +86,14 @@ async function runIntakePipeline(session, { text, files }) {
     }
   }
 
-  sessionsStore.setIocs(session, mergeIocs(session.iocs, regexIocs, llmIocs));
-  sessionsStore.addEntities(session, llmEntities);
+  const attachSourceDocument = (item) => {
+    const sourceDoc = sessionsStore.findSourceDocumentByName(session, item.source_file);
+    return sourceDoc ? { ...item, source_document_id: sourceDoc.id } : item;
+  };
+
+  sessionsStore.setIocs(session, mergeIocs(session.iocs, regexIocs.map(attachSourceDocument), llmIocs.map(attachSourceDocument)));
+  sessionsStore.addEntities(session, llmEntities.map(attachSourceDocument));
+  sessionsStore.refreshRelationships(session);
 }
 
 async function handleApi(req, res, pathname, query) {
@@ -188,11 +197,38 @@ async function handleApi(req, res, pathname, query) {
     if (req.method === "GET" && rest === "/documents") {
       const listing = sessionsStore.listDocuments(session, {
         module: query.get("module") || undefined,
-        sort: query.get("sort") || "recent",
+        sort: query.get("sort") || "relevance",
         cursor: Number(query.get("cursor") || 0),
         limit: Number(query.get("limit") || 20)
       });
       return sendJson(res, 200, listing);
+    }
+
+    const sourceDocMatch = rest.match(/^\/source-documents\/([^/]+)$/);
+    if (req.method === "GET" && sourceDocMatch) {
+      const docId = decodeURIComponent(sourceDocMatch[1]);
+      const doc = sessionsStore.getSourceDocument(session, docId);
+      if (!doc) return sendJson(res, 404, { detail: "Source document not found" });
+      const iocSpans = extractIocsFromText(doc.content, doc.source_file);
+      return sendJson(res, 200, { ...doc, iocSpans });
+    }
+
+    if (req.method === "DELETE" && sourceDocMatch) {
+      const docId = decodeURIComponent(sourceDocMatch[1]);
+      const doc = sessionsStore.getSourceDocument(session, docId);
+      if (!doc) return sendJson(res, 404, { detail: "Source document not found" });
+      if (doc.type !== "file") return sendJson(res, 400, { detail: "Only uploaded files can be deleted" });
+      sessionsStore.deleteSourceDocument(session, docId);
+      return sendJson(res, 200, serializeSession(session));
+    }
+
+    const relationshipMatch = rest.match(/^\/relationships\/([^/]+)$/);
+    if (relationshipMatch && req.method === "PATCH") {
+      const relationshipId = decodeURIComponent(relationshipMatch[1]);
+      const body = await readJson(req);
+      const updated = sessionsStore.updateRelationshipStatus(session, relationshipId, body.status);
+      if (!updated) return sendJson(res, 404, { detail: "Relationship candidate not found" });
+      return sendJson(res, 200, serializeSession(session));
     }
 
     const docMatch = rest.match(/^\/documents\/([^/]+)(\/semantic)?$/);

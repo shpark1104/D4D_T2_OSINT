@@ -9,16 +9,44 @@
   <body>
     <main class="shell">
       <aside class="rail">
-        <h1>D4D CTI</h1>
+        <div class="rail-title">
+          <h1>D4D CTI</h1>
+          <select id="languageMode" aria-label="Language">
+            <option value="ko">한국어</option>
+            <option value="en">English</option>
+          </select>
+        </div>
         <p id="mode" class="muted">mode: checking</p>
 
         <section>
-          <h2>IOC</h2>
+          <div class="section-heading">
+            <h2 data-i18n="stageStatusHeading">처리 단계</h2>
+            <span id="stageBadge" class="muted">idle</span>
+          </div>
+          <div id="stageList" class="stage-list"></div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <h2 data-i18n="uploadedFiles">업로드 파일</h2>
+            <span id="sourceCount" class="muted">0</span>
+          </div>
+          <div id="sourceList" class="mini-list muted">No files</div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <h2 data-i18n="extractedIoc">추출 IOC</h2>
+            <span id="iocCount" class="muted">0</span>
+          </div>
+          <p id="iocHelp" class="help-text">
+            IP, URL, email, hash, CVE, wallet, Telegram handle을 패턴으로 추출합니다.
+          </p>
           <div id="iocList" class="chips muted">No IOC</div>
         </section>
 
         <section>
-          <h2>Entity (LLM)</h2>
+          <h2 data-i18n="entityHeading">Entity (LLM)</h2>
           <div id="entityList" class="muted">No entity</div>
         </section>
 
@@ -31,7 +59,7 @@
       <section class="workspace">
         <header>
           <div>
-            <span>CTI analysis session</span>
+            <span data-i18n="sessionLabel">CTI analysis session</span>
             <h2 id="title">New incident</h2>
           </div>
           <form id="searchForm" class="search">
@@ -45,16 +73,17 @@
               <option value="gm">GM</option>
               <option value="lm">LM</option>
             </select>
-            <input id="query" placeholder="IOC or keyword" />
-            <button>Search</button>
+            <input id="query" data-i18n-placeholder="queryPlaceholder" placeholder="IOC or keyword" />
+            <button id="manualSearch" type="submit">Search</button>
+            <button id="autoSearch" type="button" disabled>자동 후보 검색</button>
           </form>
         </header>
 
         <section class="intake">
           <div id="chatThread" class="chat-thread muted">아직 업로드된 내용이 없습니다.</div>
-          <div id="dropzone" class="dropzone">여기로 파일을 드래그하거나 클릭하여 업로드 (.log .txt .csv .json .eml)</div>
+          <div id="dropzone" class="dropzone" data-i18n="dropzone">여기로 파일을 드래그하거나 클릭하여 업로드 (.log .txt .csv .json .eml)</div>
           <input id="files" type="file" multiple hidden />
-          <textarea id="message" placeholder="침해사고 로그, 노트, 텍스트를 붙여넣으세요"></textarea>
+          <textarea id="message" data-i18n-placeholder="messagePlaceholder" placeholder="침해사고 로그, 노트, 텍스트를 붙여넣으세요"></textarea>
           <div class="actions">
             <div id="pendingFiles" class="muted">첨부 파일 없음</div>
             <button id="analyze">분석 시작</button>
@@ -63,10 +92,18 @@
 
         <section class="stage">
           <div class="stage-header">
-            <h2>StealthMole 조회 대기열</h2>
+            <div>
+              <h2 data-i18n="stageHeading">StealthMole 조회 대기열</h2>
+              <p id="autoSearchHelp" class="help-text">분석 직후 추출 IOC를 자동 검색합니다. IOC가 없으면 파일명/본문 키워드 후보를 사용합니다.</p>
+            </div>
             <button id="runQueryBtn" disabled>StealthMole 조회 실행</button>
           </div>
           <div id="stageTray" class="stage-tray muted">왼쪽 IOC 칩을 여기로 드래그하세요</div>
+          <div class="history-row">
+            <strong data-i18n="historyHeading">검색 히스토리</strong>
+            <div id="historyList" class="history-list muted">No searches</div>
+          </div>
+          <div id="mockNotice" class="notice" hidden></div>
         </section>
 
         <section class="wallet-block">
@@ -97,19 +134,30 @@
                 <option value="gm">GM</option>
                 <option value="lm">LM</option>
               </select>
+              <select id="typeFilter">
+                <option value="">전체 유형</option>
+              </select>
+              <select id="sourceFilter">
+                <option value="">전체 출처</option>
+              </select>
               <select id="sortOrder">
+                <option value="relevance">관련도순</option>
                 <option value="recent">최신순</option>
                 <option value="source">출처별</option>
               </select>
               <span id="resultsCount" class="muted"></span>
             </div>
+            <div id="resultSummary" class="result-summary muted">검색을 실행하면 결과 설명이 여기에 표시됩니다.</div>
             <div id="resultsList" class="results-list muted">No reports</div>
             <button id="loadMore" class="load-more" hidden>더 보기</button>
           </article>
 
           <article class="viewer-panel">
             <div class="viewer-toolbar">
-              <h2 id="docTitle">문서를 선택하세요</h2>
+              <div>
+                <h2 id="docTitle">문서를 선택하세요</h2>
+                <button id="docSource" class="source-button" type="button" disabled>원본 없음</button>
+              </div>
               <div class="highlight-toggle">
                 <button data-mode="ioc" class="hl-btn active">IOC</button>
                 <button data-mode="semantic" class="hl-btn">의미론적</button>
@@ -118,8 +166,39 @@
               </div>
             </div>
             <div id="docMeta" class="muted"></div>
+            <p id="highlightHelp" class="help-text">
+              문서 IOC는 현재 문서 본문에서 다시 찾은 IOC입니다. 의미론적 highlight는 actor, 인프라 재사용, 연락 채널처럼 CTI 의미가 있는 문장을 표시합니다.
+            </p>
             <pre id="document">왼쪽 목록에서 문서를 클릭하면 여기에 표시됩니다.</pre>
+            <pre id="rawDocument" class="raw-document" hidden></pre>
+            <section class="doc-inspector">
+              <div>
+                <div class="section-heading">
+                  <h2 data-i18n="docIocHeading">문서 IOC</h2>
+                  <span id="docIocCount" class="muted">0</span>
+                </div>
+                <div id="docIocList" class="inspector-list muted">No IOC</div>
+              </div>
+              <div>
+                <div class="section-heading">
+                  <h2 data-i18n="semanticHeading">Semantic Highlights</h2>
+                  <span id="semanticCount" class="muted">0</span>
+                </div>
+                <div id="semanticList" class="inspector-list muted">No highlights</div>
+              </div>
+            </section>
           </article>
+        </section>
+
+        <section class="relationship-panel">
+          <div class="section-heading">
+            <div>
+              <h2 data-i18n="relationshipHeading">동일인/동일 활동 후보</h2>
+              <p id="relationshipHelp" class="help-text">확정 병합이 아니라 검토 후보입니다. 같은 문서에 함께 등장하거나 강한 식별자를 공유할 때 점수가 올라갑니다.</p>
+            </div>
+            <span id="relationshipCount" class="muted">0</span>
+          </div>
+          <div id="relationshipList" class="relationship-list muted">No relationship candidates</div>
         </section>
       </section>
     </main>
