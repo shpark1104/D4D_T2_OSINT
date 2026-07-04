@@ -64,7 +64,7 @@ Node.js 18 or later is expected. There are no runtime npm dependencies.
 
 ## Vercel Deployment
 
-The Vercel entrypoint is the root [server.js](./server.js), which starts the same plain Node.js HTTP server used locally. Keep this file at the repository root so Vercel can detect the app as a Node server instead of deploying only `public/` as a static site.
+Vercel serves static assets from [public/](./public) and routes `/api/*` to [api/[...path].js](./api/[...path].js), which delegates to the same Node router used locally. The root [server.js](./server.js) remains the local/Vercel Node server entrypoint, but the catch-all API function makes API routing explicit for Vercel deployments.
 
 Recommended Vercel settings:
 
@@ -82,9 +82,10 @@ STEALTHMOLE_SECRET_KEY=
 STEALTHMOLE_MOCK=false
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
+OPENAI_TIMEOUT_MS=8000
 ```
 
-If `자료 제출 실패: Request failed` appears after deployment, check the deployed `/api/health` URL first. A 404 or HTML response usually means Vercel did not route requests to the Node server. A JSON response means the server is running and the next place to inspect is the Vercel Function log.
+If `자료 제출 실패: Request failed` appears after deployment, check the deployed `/api/health` URL first. A 404 or HTML response usually means Vercel did not route requests to the API function. A JSON response means the API function is running and the next place to inspect is the Vercel Function log.
 
 Current sessions, submitted evidence, and search results are still in memory. On Vercel this is demo-suitable but not durable: cold starts, function instance changes, or redeploys can reset session state.
 
@@ -103,6 +104,7 @@ STEALTHMOLE_MOCK=true
 
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
+OPENAI_TIMEOUT_MS=8000
 ```
 
 Behavior:
@@ -110,6 +112,7 @@ Behavior:
 - If StealthMole keys are empty, or `STEALTHMOLE_MOCK=true`, search and quota calls use synthetic mock data.
 - If `STEALTHMOLE_MOCK=false` and both StealthMole keys are present, the server uses the live API.
 - If `OPENAI_API_KEY` is empty, LLM IOC extraction and semantic highlighting no-op gracefully.
+- `OPENAI_TIMEOUT_MS` limits each OpenAI request so Vercel functions can return regex-based results instead of timing out the whole evidence submission.
 - `.env` is ignored by git and should remain local.
 
 ## StealthMole Integration
@@ -211,6 +214,7 @@ CTI_개발_마일스톤.md           Milestone plan
 package.json                  Node scripts and engine hint
 server.js                     Root Node server entrypoint for local start and Vercel
 
+api/[...path].js              Vercel catch-all API function for /api/*
 server/config.js              .env loader and runtime config
 server/index.js               HTTP routing, static serving, API routes
 server/sessions.js            In-memory session/document/query store

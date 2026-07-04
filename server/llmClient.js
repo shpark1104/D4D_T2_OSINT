@@ -9,21 +9,34 @@ async function callLlm({ system, prompt, maxTokens = 1500 }) {
     return { enabled: false, text: "" };
   }
 
-  const response = await fetch(OPENAI_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${llm.apiKey}`
-    },
-    body: JSON.stringify({
-      model: llm.model,
-      max_tokens: maxTokens,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: prompt }
-      ]
-    })
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), llm.timeoutMs);
+  let response;
+  try {
+    response = await fetch(OPENAI_URL, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${llm.apiKey}`
+      },
+      body: JSON.stringify({
+        model: llm.model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: prompt }
+        ]
+      })
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw Object.assign(new Error(`OpenAI API timed out after ${llm.timeoutMs}ms`), { status: 504 });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");

@@ -63,7 +63,7 @@ Still intentionally incomplete:
 npm run dev
 ```
 
-The app starts from root `server.js`, which calls `server/index.js`. Keep the root entrypoint because Vercel detects it as the deployable Node HTTP server. `server/index.js` can still be run directly for local debugging.
+The app starts locally from root `server.js`, which calls `server/index.js`. Vercel also uses `api/[...path].js` as a catch-all function for `/api/*`, delegating to the same router. Keep both entrypoints: `server.js` for local/full Node server startup and `api/[...path].js` for explicit Vercel API routing.
 
 Node.js 18 or later is expected. The scaffold currently avoids external npm dependencies.
 
@@ -71,6 +71,7 @@ Recommended syntax checks after JavaScript changes:
 
 ```bash
 node --check server.js
+node --check "api/[...path].js"
 node --check server/index.js
 node --check server/stealthmoleClient.js
 node --check server/relationshipResolver.js
@@ -102,6 +103,7 @@ STEALTHMOLE_MOCK=true
 
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
+OPENAI_TIMEOUT_MS=8000
 ```
 
 Runtime behavior:
@@ -109,6 +111,7 @@ Runtime behavior:
 - If StealthMole keys are empty or `STEALTHMOLE_MOCK=true`, mock responses are returned.
 - If StealthMole keys are present and `STEALTHMOLE_MOCK=false`, live StealthMole API calls are made.
 - If `OPENAI_API_KEY` is empty, LLM stages no-op gracefully.
+- `OPENAI_TIMEOUT_MS` bounds each OpenAI request so evidence submission can still complete with regex IOC extraction if LLM calls are slow.
 - `.env` must never be committed.
 - On Vercel, configure these values in Project Settings because local `.env` is not deployed.
 
@@ -118,6 +121,7 @@ Keep module boundaries explicit:
 
 - `server/config.js`: environment loading and runtime config only.
 - `server.js`: root Node server entrypoint for local `npm start` and Vercel detection.
+- `api/[...path].js`: Vercel catch-all API function for `/api/*`, delegating to `server/index.js`.
 - `server/index.js`: HTTP routing, static serving, endpoint orchestration, and exported server/start helpers.
 - `server/sessions.js`: in-memory session/document/query storage.
 - `server/iocExtractor.js`: deterministic IOC extraction, normalization, defanging.

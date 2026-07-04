@@ -75,9 +75,16 @@ async function api(path, options = {}) {
     ...fetchOptions,
     headers: { "Content-Type": "application/json", ...(headers || {}) }
   });
-  const data = await response.json().catch(() => ({}));
+  const rawText = await response.text();
+  let data = {};
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    const plain = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    data = { detail: plain ? `${response.status} ${response.statusText}: ${shortText(plain, 180)}` : "" };
+  }
   if (!response.ok) {
-    const error = new Error(data.detail || "Request failed");
+    const error = new Error(data.detail || `${response.status} ${response.statusText || "Request failed"}`);
     error.status = response.status;
     error.detail = data.detail;
     throw error;

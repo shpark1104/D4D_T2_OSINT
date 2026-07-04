@@ -19,6 +19,26 @@ function sendJson(res, status, data) {
 }
 
 function readJson(req) {
+  if (req.body !== undefined && req.body !== null) {
+    if (typeof req.body === "string") {
+      try {
+        return Promise.resolve(req.body ? JSON.parse(req.body) : {});
+      } catch {
+        return Promise.reject(Object.assign(new Error("Invalid JSON body"), { status: 400 }));
+      }
+    }
+    if (Buffer.isBuffer(req.body)) {
+      try {
+        return Promise.resolve(req.body.length ? JSON.parse(req.body.toString("utf8")) : {});
+      } catch {
+        return Promise.reject(Object.assign(new Error("Invalid JSON body"), { status: 400 }));
+      }
+    }
+    if (typeof req.body === "object") {
+      return Promise.resolve(req.body);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const chunks = [];
     req.on("data", (chunk) => chunks.push(chunk));
