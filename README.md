@@ -20,7 +20,7 @@ that teammates can read, run, and extend quickly.
 - Lets analysts maintain a separate interest Node list, rename those nodes, and reopen them.
 - Adds submitted evidence automatically to the interest Node list.
 - Shows OpenAI semantic highlights as underlines when `OPENAI_API_KEY` is configured.
-- Extracts review-only relationship candidates for selected interest IOCs through the left IOC widget popup.
+- Extracts review-only relationship candidates from the left IOC widget. Unqueried interest IOCs are looked up first, then the relationship popup is built from the selected IOCs and result documents.
 - Shows a wallet graph only for selected Bitcoin/Ethereum wallet IOC searches.
 - Supports dragging wallet graph nodes into the interest IOC list.
 
@@ -41,7 +41,7 @@ Important interaction details:
 - Clicking a result opens its full detail in the center viewer.
 - The center viewer can add the currently displayed node to interest Nodes with the `+` button.
 - Interest Nodes can be renamed from the left widget with the pen icon.
-- The relationship button in the interest IOC widget runs candidate extraction only for currently selected interest IOCs.
+- The `관계 추출` button in the interest IOC widget first queries any selected IOC that has not been queried yet, then opens a relationship-candidate popup.
 
 ## Quick Start
 
@@ -97,6 +97,7 @@ Implemented live lookup behavior:
 - Quota display through `/user/quotas`.
 - Sync module support: `cl`, `cb`, `cds`, `rm`, `gm`, `lm`.
 - Async Telegram Tracker support: `tt`.
+- TT `target/all` responses are normalized with target-aware filtering and sorting so non-Telegram indicators such as CVE, hash, Bitcoin, Ethereum, and Discord do not surface context-free Telegram user/channel nodes ahead of direct indicator matches.
 - `dt`, `ub`, and `cdf` are intentionally excluded from the current IOC-to-node workflow.
 
 Current automatic IOC routing:
@@ -116,6 +117,16 @@ Current automatic IOC routing:
 | `keyword` | `tt` keyword plus `rm`, `gm`, `lm` plain query |
 
 Manual module search from the right panel bypasses this routing table and calls the selected module directly.
+
+### TT Target Handling
+
+StealthMole's TT API can return multiple target buckets for one indicator. For example, a CVE lookup may return `cve`, `telegram.message`, `telegram.channel`, and `telegram.user` results. The app keeps the target name in `raw_response.__target` and applies these rules:
+
+- The searched indicator's own target is shown first when present, such as `cve`, `hash`, `bitcoin`, `ethereum`, or `discord`.
+- Non-Telegram targets come before Telegram graph targets for non-Telegram indicators.
+- Telegram results are still shown when the searched text actually appears in `highlight`, `value`, or `metadata`.
+- Telegram user/channel nodes with no direct match evidence are filtered out for broad indicator searches.
+- Telegram-specific searches keep Telegram message/channel/user targets as first-class results.
 
 ## LLM Integration
 
@@ -156,6 +167,7 @@ Behavior:
 - Enabled only when the active query is a Bitcoin or Ethereum wallet IOC.
 - Initially renders only the selected wallet address.
 - Clicking the selected Bitcoin wallet calls the transaction explorer endpoint and reveals up to five real transaction counterparties.
+- Wallet edges display lightweight direction/count labels such as `sent 3tx` or `received 1tx`.
 - Dragging a wallet node to the interest IOC list registers it as an IOC.
 - Clicking a linked wallet starts a new wallet lookup for that address.
 - Nodes show only the first five address characters.
@@ -196,6 +208,8 @@ There is no formal test suite yet. For now, run syntax checks on touched JavaScr
 ```bash
 node --check server/index.js
 node --check server/stealthmoleClient.js
+node --check server/relationshipResolver.js
+node --check server/walletExplorer.js
 node --check public/app.js
 node --check public/walletGraph.js
 ```
@@ -232,6 +246,7 @@ Expected live response shape:
 - No formal test suite.
 - `cdf` file-download workflows are not integrated into the current viewer.
 - Relationship extraction produces analyst-review candidates, not confirmed entity merges.
+- Relationship extraction can consume StealthMole quota because it queries selected interest IOCs that have not been queried yet.
 - TT node detail is fetched lazily only when a result is opened.
 - Bitcoin wallet graph links depend on public transaction data from `mempool.space`; Ethereum transaction expansion is not implemented yet.
 

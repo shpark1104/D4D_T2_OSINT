@@ -165,6 +165,13 @@
     };
   }
 
+  function edgeLabel(node) {
+    const directions = Array.isArray(node.directions) ? node.directions : [];
+    const direction = directions.length ? directions.slice(0, 2).join("/") : "";
+    const count = node.txCount ? `${node.txCount}tx` : "";
+    return [direction, count].filter(Boolean).join(" ");
+  }
+
   function allNeighbors(graph) {
     const byAddress = new Map();
     for (const neighbors of Object.values(graph.seedNeighbors || {})) {

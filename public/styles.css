@@ -179,6 +179,14 @@ p {
   padding: 0;
 }
 
+.relationship-action-btn {
+  min-width: 70px;
+  height: 30px;
+  padding: 0 9px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
 .count {
   min-width: 24px;
   padding: 2px 7px;

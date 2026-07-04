@@ -34,7 +34,8 @@ const state = {
   semanticHighlights: null,
   semanticEnabled: true,
   walletGraph: null,
-  relationships: []
+  relationships: [],
+  relationshipLookup: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -1016,9 +1017,14 @@ function renderRelationshipModal(relationships = state.relationships) {
   if (!list || !summary) return;
 
   const count = relationships.length;
+  const lookedUp = state.relationshipLookup?.lookedUpCount || 0;
+  const lookupResults = state.relationshipLookup?.lookupResultCount || 0;
+  const lookupText = lookedUp
+    ? `새 StealthMole 조회 ${lookedUp}개, 모듈 응답 ${lookupResults}건`
+    : "새 StealthMole 조회 없음";
   summary.textContent = count
-    ? `관심 IOC ${state.interestIocs.length}개 기준 관계 후보 ${count}건`
-    : `관심 IOC ${state.interestIocs.length}개 기준으로 표시할 관계 후보가 없습니다.`;
+    ? `관심 IOC ${state.interestIocs.length}개 기준 관계 후보 ${count}건 · ${lookupText}`
+    : `관심 IOC ${state.interestIocs.length}개 기준으로 표시할 관계 후보가 없습니다. · ${lookupText}`;
 
   if (!count) {
     list.className = "relationship-list muted";
@@ -1063,26 +1069,41 @@ function renderRelationshipModal(relationships = state.relationships) {
 async function extractRelationshipsForInterestIocs() {
   if (!state.interestIocs.length) {
     state.relationships = [];
+    state.relationshipLookup = null;
     renderRelationshipModal();
     openRelationshipModal();
     return;
   }
 
   const button = $("#extractRelationshipsBtn");
-  if (button) button.disabled = true;
+  const previousText = button?.textContent || "관계 추출";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "조회/추출 중...";
+  }
   try {
     const data = await sessionApi((sessionId) => `/api/sessions/${sessionId}/relationships`, {
       method: "POST",
       body: JSON.stringify({ iocs: state.interestIocs })
     });
     state.relationships = data.relationships || [];
+    state.relationshipLookup = {
+      lookedUpCount: Array.isArray(data.lookedUp) ? data.lookedUp.length : 0,
+      lookupResultCount: Array.isArray(data.lookupResults) ? data.lookupResults.length : 0
+    };
+    state.session = await sessionApi((sessionId) => `/api/sessions/${sessionId}`);
     if (state.session) state.session.relationships = state.relationships;
+    renderInterestIocs();
     renderRelationshipModal();
     openRelationshipModal();
   } catch (error) {
     alert(`관계 추출 실패: ${error.message}`);
   } finally {
-    if (button) button.disabled = !state.interestIocs.length;
+    const nextButton = $("#extractRelationshipsBtn");
+    if (nextButton) {
+      nextButton.textContent = previousText;
+      nextButton.disabled = !state.interestIocs.length;
+    }
   }
 }
 

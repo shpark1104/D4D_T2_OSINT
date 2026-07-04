@@ -23,7 +23,7 @@ Current analyst workflow:
 7. Analyst clicks a result to lazily load full node/document detail into the center viewer.
 8. Analyst can add the currently displayed node to interest Nodes with the `+` button.
 9. Analyst can rename interest Nodes from the left widget with the pen icon.
-10. Analyst can run relationship candidate extraction from the interest IOC widget.
+10. Analyst can run relationship candidate extraction from the interest IOC widget; any selected IOC that has not been queried yet is looked up first.
 11. For Bitcoin/Ethereum wallet IOC lookups, the wallet graph is enabled in the center viewer.
 
 The UI is intentionally dense and operational: left interests, center viewer, right search/results.
@@ -44,7 +44,7 @@ Implemented:
 - TT node detail drill-down on document open.
 - Interest IOC and interest Node widgets.
 - Analyst evidence as an automatically registered interest Node.
-- Interest-IOC relationship candidate popup using selected IOCs, LLM entities, and lookup result documents.
+- Interest-IOC relationship candidate popup using selected IOCs, LLM entities, and lookup result documents; relationship extraction pre-queries selected unqueried IOCs.
 - Wallet graph module in `public/walletGraph.js`.
 
 Still intentionally incomplete:
@@ -72,6 +72,8 @@ Recommended syntax checks after JavaScript changes:
 ```bash
 node --check server/index.js
 node --check server/stealthmoleClient.js
+node --check server/relationshipResolver.js
+node --check server/walletExplorer.js
 node --check public/app.js
 node --check public/walletGraph.js
 ```
@@ -157,6 +159,15 @@ Current automatic IOC route table:
 - `discord_id` -> `tt` indicator `discord`.
 - `keyword` -> `tt` keyword plus `rm`, `gm`, `lm` plain query.
 
+TT target handling:
+
+- `target/all` returns a map of target buckets, not one homogeneous result list.
+- For non-Telegram indicators (`cve`, `hash`, `bitcoin`, `ethereum`, `discord`, broad `keyword`), do not let Telegram user/channel buckets dominate the result list.
+- Preserve the target bucket on normalized TT items as `raw_response.__target`.
+- Sort direct indicator targets first when they exist, then other non-Telegram targets, then Telegram message/channel/user targets.
+- Filter TT items that do not contain the searched text in `highlight`, `value`, or `metadata`; this avoids showing context-free Telegram user IDs for CVE/hash/wallet searches.
+- Telegram-specific searches may prioritize Telegram message/channel/user targets because that is the analyst intent.
+
 Do not automatically add `dt`, `ub`, or `cdf` to the current IOC-to-node flow without a deliberate design change:
 
 - `dt` and `ub` are excluded by the hackathon manual/scope.
@@ -190,6 +201,8 @@ Guidelines:
 - Preserve `raw_response` for later detail/debug use.
 - Include `proof_url` as `source_url` when available.
 - For TT numeric node-like values, use a label such as `Telegram node <value>`.
+- For TT results, prefer labels that include the target bucket, such as `CVE: ...`, `Hash: ...`, `Bitcoin: ...`, or `Telegram message: ...`.
+- Clean placeholder display values such as `N/A`, `unknown`, `null`, and `-` when rendering TT node details.
 - TT full detail should stay lazy to avoid quota-heavy eager `/tt/node` calls.
 
 ## LLM Integration Notes
@@ -201,6 +214,7 @@ LLM stages:
 - Evidence intake IOC/entity extraction.
 - Semantic highlight extraction for evidence and opened documents.
 - Relationship candidate extraction uses LLM-extracted entities plus selected interest IOCs and lookup result documents. It does not call the LLM again.
+- Relationship extraction may call StealthMole before resolving candidates when a selected interest IOC has not been queried yet.
 
 Semantic highlight response shape:
 
@@ -239,6 +253,7 @@ UX rules:
 - IOC highlights should be clickable to register selected IOCs.
 - Interest IOCs should be draggable to the lookup queue.
 - Relationship extraction should run from the interest IOC widget and consider only currently selected interest IOCs.
+- The relationship action is a text button labeled `관계 추출`, not an abstract share/network icon.
 - Relationship candidates should appear in a popup and be clearly treated as analyst-review candidates.
 - Search results should be draggable to interest Nodes.
 - Submitted evidence should be auto-registered as an interest Node.
@@ -268,6 +283,8 @@ Behavior:
 - Initially render only the selected address.
 - On selected Bitcoin node click, call the independent transaction explorer endpoint and reveal real transaction counterparties.
 - Limit visible transaction counterparty nodes to five.
+- Keep wallet graph loading states bounded: failed or completed counterparty fetches must always clear the loading chip.
+- Keep edge labels lightweight, e.g. transaction direction and count.
 - Dragging graph nodes to interest IOC list should register the wallet IOC.
 - Linked wallet click may start a new wallet lookup.
 - Show only first five address characters inside the node.

@@ -159,6 +159,102 @@ function firstReadableLine(value, fallback) {
   return (line || fallback || "(untitled)").slice(0, 140);
 }
 
+function targetLabel(target) {
+  const labels = {
+    "telegram.message": "Telegram message",
+    "telegram.channel": "Telegram channel",
+    "telegram.user": "Telegram user",
+    "telegram.user-profile": "Telegram user profile",
+    "telegram.channel-profile": "Telegram channel profile",
+    cve: "CVE",
+    hash: "Hash",
+    bitcoin: "Bitcoin",
+    ethereum: "Ethereum",
+    discord: "Discord",
+    image: "Image",
+    document: "Document",
+    exefile: "Executable file",
+    otherfile: "Other file",
+    compressed: "Compressed file"
+  };
+  return labels[target] || target || "Telegram Tracker";
+}
+
+function isTelegramIndicator(indicator) {
+  return indicator === "telegram";
+}
+
+function isTelegramTarget(target) {
+  return /^telegram(?:[.-]|$)/.test(String(target || ""));
+}
+
+function isTelegramMessageTarget(target) {
+  return String(target || "").startsWith("telegram.message");
+}
+
+function isTelegramChannelTarget(target) {
+  return String(target || "").startsWith("telegram.channel") || String(target || "").includes("channel");
+}
+
+function isTelegramUserTarget(target) {
+  return String(target || "").startsWith("telegram.user") || String(target || "").includes("user");
+}
+
+function ttTargetPriority(target, indicator) {
+  if (target === indicator) return 0;
+
+  if (isTelegramIndicator(indicator)) {
+    if (isTelegramMessageTarget(target)) return 0;
+    if (isTelegramChannelTarget(target)) return 1;
+    if (isTelegramUserTarget(target)) return 2;
+    if (isTelegramTarget(target)) return 3;
+    return 4;
+  }
+
+  if (!isTelegramTarget(target)) return 1;
+  if (isTelegramMessageTarget(target)) return 2;
+  if (isTelegramChannelTarget(target)) return 3;
+  if (isTelegramUserTarget(target)) return 4;
+  return 5;
+}
+
+function sortTtResults(a, b, indicator) {
+  const targetA = a.raw_response?.__target;
+  const targetB = b.raw_response?.__target;
+  return (
+    ttTargetPriority(targetA, indicator) - ttTargetPriority(targetB, indicator) ||
+    new Date(b.timestamp || 0) - new Date(a.timestamp || 0) ||
+    String(a.title || "").localeCompare(String(b.title || ""))
+  );
+}
+
+function normalizeComparableText(value) {
+  return stripHtml(value)
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isDirectTtMatch(item, queryText) {
+  const query = normalizeComparableText(queryText);
+  if (!query) return true;
+  const fields = [item.highlight, item.value, item.metadata]
+    .map(normalizeComparableText)
+    .filter(Boolean);
+  return fields.some((field) => field.includes(query));
+}
+
+function cleanDisplayValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^(n\/a|na|null|none|unknown|-+)$/i.test(text)) return "";
+  return text;
+}
+
+function joinDisplayParts(parts) {
+  return parts.map(cleanDisplayValue).filter(Boolean).join(" | ");
+}
+
 // Convert each module's native response shape into the unified result schema.
 function normalizeItem(module, item) {
   switch (module) {
@@ -244,24 +340,28 @@ function normalizeItem(module, item) {
       };
     case "tt":
       {
+        const target = item.__target || null;
         const content = stripHtml(item.highlight || item.value || "");
         const value = String(item.value || "");
         const valueLooksLikeNodeId = /^[0-9]+(?:_[0-9]+)?$/.test(value);
+        const label = targetLabel(target);
         const title =
-          valueLooksLikeNodeId && content === value
-            ? `Telegram node ${value}`
+          target === "telegram.message" && item.highlight
+            ? `${label}: ${firstReadableLine(content, value)}`
+            : valueLooksLikeNodeId && content === value
+            ? `${label} node ${value}`
             : valueLooksLikeNodeId
-              ? firstReadableLine(content, value)
-              : firstReadableLine(value, content);
+              ? `${label}: ${firstReadableLine(content, value)}`
+              : `${label}: ${firstReadableLine(value, content)}`;
         return {
           id: item.id,
           source_url: null,
           title,
           content,
           timestamp: item.createDate ? new Date(item.createDate * 1000).toISOString() : null,
-          forum_name: "Telegram Tracker",
+          forum_name: label,
           author_alias: null,
-          indicators_tagged: [],
+          indicators_tagged: [target, value].filter(Boolean),
           raw_response: item
         };
       }
@@ -333,27 +433,32 @@ async function asyncSearchAll(indicator, text, { limit = 100, maxPolls = 3, poll
   const collected = [];
   const pendingPolls = [];
 
-  for (const [, target] of Object.entries(body || {})) {
-    if (Array.isArray(target.data)) collected.push(...target.data);
+  for (const [targetName, target] of Object.entries(body || {})) {
+    if (Array.isArray(target.data)) {
+      collected.push(...target.data.map((item) => ({ ...item, __target: targetName })));
+    }
     const pollId = target.id || target.cid;
     if (target.last === false && pollId) {
-      pendingPolls.push(pollId);
+      pendingPolls.push({ pollId, targetName });
     }
   }
 
   let stillProcessing = false;
-  for (const pollId of pendingPolls) {
+  for (const { pollId, targetName } of pendingPolls) {
     let last = false;
     for (let attempt = 0; attempt < maxPolls && !last; attempt += 1) {
       await sleep(pollDelayMs);
       const page = await apiFetch(`/tt/search/${pollId}`, { limit });
-      if (Array.isArray(page.data)) collected.push(...page.data);
+      if (Array.isArray(page.data)) {
+        collected.push(...page.data.map((item) => ({ ...item, __target: targetName })));
+      }
       last = page.last === true;
     }
     if (!last) stillProcessing = true;
   }
 
-  const results = collected.map((item) => normalizeItem("tt", item));
+  const directMatches = collected.filter((item) => isDirectTtMatch(item, text));
+  const results = directMatches.map((item) => normalizeItem("tt", item)).sort((a, b) => sortTtResults(a, b, indicator));
   const normalized = {
     module: "tt",
     results_count: results.length,
@@ -375,18 +480,22 @@ function pickReadableText(node) {
   if (Array.isArray(node.message) && node.message.length) return node.message.join("\n---\n");
   if (typeof node.text === "string" && node.text.trim()) return node.text;
   if (node.first_name || node.last_name || (Array.isArray(node.username) && node.username.length)) {
-    const name = [node.first_name, node.last_name].filter(Boolean).join(" ");
+    const name = [node.first_name, node.last_name].map(cleanDisplayValue).filter(Boolean).join(" ");
     const handles = Array.isArray(node.username)
-      ? node.username.map((h) => `@${String(h).replace(/^@/, "")}`).join(", ")
+      ? node.username
+          .map(cleanDisplayValue)
+          .filter(Boolean)
+          .map((h) => `@${String(h).replace(/^@/, "")}`)
+          .join(", ")
       : "";
-    return [name, handles, node.phone].filter(Boolean).join(" · ") || null;
+    const profile = joinDisplayParts([name, handles, node.phone]);
+    return profile ? `Telegram user: ${profile}` : null;
   }
   if (node.title || node.url) {
-    return [node.title, node.url, node.countMembers && `members=${node.countMembers}`]
-      .filter(Boolean)
-      .join(" · ");
+    const channel = joinDisplayParts([node.title, node.url, node.countMembers && `members=${node.countMembers}`]);
+    return channel ? `Telegram channel: ${channel}` : null;
   }
-  if (node.domain) return [node.domain, node.ip && `ip=${node.ip}`].filter(Boolean).join(" · ");
+  if (node.domain) return joinDisplayParts([node.domain, node.ip && `ip=${node.ip}`]) || null;
   return null;
 }
 

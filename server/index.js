@@ -146,9 +146,26 @@ async function handleApi(req, res, pathname, query) {
         ? body.iocs
             .map((ioc) => ({ type: ioc.type || inferIocType(ioc.value || ""), value: String(ioc.value || "").trim() }))
             .filter((ioc) => ioc.value)
+            .slice(0, MAX_BATCH_QUERY_IOCS)
         : [];
+      const queryResultsByIoc = [];
+      const unqueriedIocs = targetIocs.filter((ioc) => !sessionsStore.isQueried(session, ioc));
+
+      for (const ioc of unqueriedIocs) {
+        sessionsStore.markQueried(session, ioc);
+        queryResultsByIoc.push(await stealthmoleClient.queryIoc(ioc));
+      }
+      if (queryResultsByIoc.length) {
+        sessionsStore.addQueryResults(session, queryResultsByIoc);
+      }
+
       const relationships = targetIocs.length ? sessionsStore.refreshRelationships(session, targetIocs) : [];
-      return sendJson(res, 200, { relationships });
+      return sendJson(res, 200, {
+        queried: targetIocs,
+        lookedUp: unqueriedIocs,
+        lookupResults: queryResultsByIoc.flat(),
+        relationships
+      });
     }
 
     const relationshipMatch = rest.match(/^\/relationships\/([^/]+)$/);
