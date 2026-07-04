@@ -18,8 +18,8 @@ Current analyst workflow:
 2. Server extracts IOC candidates with regex and optional OpenAI assistance.
 3. Center viewer highlights IOC candidates immediately.
 4. Analyst clicks only interesting IOC highlights to register them in the left interest IOC list.
-5. Analyst drags selected IOCs into the API lookup queue.
-6. Analyst runs the queue and reviews only the latest search results in the right panel.
+5. Analyst clicks or drags one selected IOC into the search field.
+6. Analyst runs a single lookup and reviews only the latest search results in the right panel.
 7. Analyst clicks a result to lazily load full node/document detail into the center viewer.
 8. Analyst can add the currently displayed node to interest Nodes with the `+` button.
 9. Analyst can rename interest Nodes from the left widget with the pen icon.
@@ -154,7 +154,7 @@ Current automatic IOC route table:
 - `md5`, `sha1`, `sha256` -> `tt` indicator `hash`.
 - `btc_address` -> `tt` indicator `bitcoin`.
 - `eth_address` -> `tt` indicator `ethereum`.
-- `telegram` -> `tt` indicator `telegram`.
+- `telegram` -> `tt` indicator `telegram`; keep the displayed IOC value as `@handle`, but strip the leading `@` from the TT API `text` parameter.
 - `cve` -> `tt` indicator `cve`.
 - `discord_id` -> `tt` indicator `discord`.
 - `keyword` -> `tt` keyword plus `rm`, `gm`, `lm` plain query.
@@ -167,6 +167,7 @@ TT target handling:
 - Sort direct indicator targets first when they exist, then other non-Telegram targets, then Telegram message/channel/user targets.
 - Filter TT items that do not contain the searched text in `highlight`, `value`, or `metadata`; this avoids showing context-free Telegram user IDs for CVE/hash/wallet searches.
 - Telegram-specific searches may prioritize Telegram message/channel/user targets because that is the analyst intent.
+- Manual `TT` module searches should use the inferred TT indicator for recognized IOC-shaped queries and fall back to `keyword` only for broad text.
 
 Do not automatically add `dt`, `ub`, or `cdf` to the current IOC-to-node flow without a deliberate design change:
 
@@ -198,6 +199,7 @@ Guidelines:
 - Make `title` useful for scanning, not just an internal ID.
 - Keep `content` concise but analyst-useful.
 - Do not expose credential passwords in normalized snippets; use `password=present`.
+- Omit placeholder-only fields such as `-`, `N/A`, `unknown`, and `null` from normalized snippets.
 - Preserve `raw_response` for later detail/debug use.
 - Include `proof_url` as `source_url` when available.
 - For TT numeric node-like values, use a label such as `Telegram node <value>`.
@@ -244,14 +246,15 @@ Layout:
 - Left: interest IOC list, interest Node list, LLM toggle, quota.
 - Interest IOC widget includes the relationship extraction action.
 - Center: exactly one active node/document/evidence viewer and optional wallet graph.
-- Right: evidence submission, keyword/module search, IOC lookup queue, latest results.
+- Right: evidence submission, keyword/module search, single IOC search target, latest results.
 
 UX rules:
 
 - Do not auto-register every extracted IOC into interest IOCs.
 - Do not auto-query every extracted IOC.
 - IOC highlights should be clickable to register selected IOCs.
-- Interest IOCs should be draggable to the lookup queue.
+- Interest IOCs should be clickable or draggable into the search field as the single active lookup target.
+- The search field should keep the submitted lookup target visible after execution.
 - Relationship extraction should run from the interest IOC widget and consider only currently selected interest IOCs.
 - The relationship action is a text button labeled `관계 추출`, not an abstract share/network icon.
 - Relationship candidates should appear in a popup and be clearly treated as analyst-review candidates.

@@ -14,7 +14,7 @@ that teammates can read, run, and extend quickly.
 - Extracts IOC candidates with deterministic regex rules and optional OpenAI assistance.
 - Highlights extracted IOCs in the center viewer by IOC type.
 - Lets analysts click IOC highlights to add only selected IOCs to the left-side interest list.
-- Lets analysts drag interest IOCs into an API lookup queue, then run StealthMole lookups.
+- Lets analysts click or drag one interest IOC into the search field, then run a single StealthMole lookup.
 - Lists only the latest lookup response in the right-side results panel.
 - Lazily opens full node/document detail only when a result is clicked.
 - Lets analysts maintain a separate interest Node list, rename those nodes, and reopen them.
@@ -30,14 +30,15 @@ The first screen is the workbench, not a landing page.
 
 - Left: interest IOC list with relationship extraction, interest Node list, LLM highlight toggle, quota display.
 - Center: one active node/document/evidence viewer, semantic underline rendering, optional wallet graph.
-- Right: evidence submission, direct keyword/module search, IOC lookup queue, current search results.
+- Right: evidence submission, direct keyword/module search, single IOC search target, current search results.
 
 Important interaction details:
 
 - IOC candidates are not automatically queried.
 - Analyst evidence is submitted with `자료 제출`.
 - Submitted evidence is automatically registered as an interest Node.
-- Search results are cleared every time a new unified search or IOC queue lookup starts.
+- Search results are cleared every time a new unified search or single IOC lookup starts.
+- The search field keeps the last submitted lookup target visible after execution.
 - Clicking a result opens its full detail in the center viewer.
 - The center viewer can add the currently displayed node to interest Nodes with the `+` button.
 - Interest Nodes can be renamed from the left widget with the pen icon.
@@ -111,12 +112,12 @@ Current automatic IOC routing:
 | `md5`, `sha1`, `sha256` | `tt` indicator `hash` |
 | `btc_address` | `tt` indicator `bitcoin` plus wallet graph |
 | `eth_address` | `tt` indicator `ethereum` plus wallet graph |
-| `telegram` | `tt` indicator `telegram` |
+| `telegram` | `tt` indicator `telegram`; leading `@` is stripped only for API search text |
 | `cve` | `tt` indicator `cve` |
 | `discord_id` | `tt` indicator `discord` |
 | `keyword` | `tt` keyword plus `rm`, `gm`, `lm` plain query |
 
-Manual module search from the right panel bypasses this routing table and calls the selected module directly.
+Manual sync-module search from the right panel calls the selected module directly. Manual `TT` search uses the inferred TT indicator when the query looks like a known IOC, otherwise it falls back to `keyword`.
 
 ### TT Target Handling
 
@@ -235,6 +236,7 @@ Expected live response shape:
 - Never commit `.env`, real API keys, JWTs, incident files, or private customer data.
 - Do not log full JWTs, raw secrets, or full credential leak passwords.
 - The current UI intentionally displays `password=present` rather than secret values in normalized result snippets.
+- Normalized result snippets omit empty placeholder fields such as `-`, `N/A`, `unknown`, and `null`.
 - Raw uploads are not persisted to disk; current state is in-memory and resets on server restart.
 - Live StealthMole requests can consume quota. Keep limits low during probes.
 

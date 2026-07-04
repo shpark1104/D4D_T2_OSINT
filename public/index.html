@@ -108,16 +108,14 @@
               <option value="lm">LM</option>
             </select>
             <input id="query" placeholder="직접 키워드 또는 IOC 입력" />
-            <button id="keywordSearchBtn" type="submit">검색</button>
+            <button id="keywordSearchBtn" type="submit">조회 실행</button>
           </form>
 
-          <div class="queue-block">
-            <div class="queue-head">
-              <div class="queue-label">API 조회 대기열</div>
-              <button id="runQueryBtn" class="secondary" type="button" disabled>조회 실행</button>
+          <div class="single-search-block">
+            <div class="single-search-head">
+              <div class="single-search-label">IOC 조회</div>
             </div>
-            <div id="stageTray" class="stage-tray drop-target muted">관심 IOC를 여기로 드래그</div>
-            <div class="queue-help muted">관심 IOC는 이 위젯 어디에 드롭해도 대기열에 추가됩니다.</div>
+            <div id="singleSearchTarget" class="single-search-target drop-target muted">관심 IOC를 드롭하거나 클릭하면 검색창에 입력됩니다.</div>
           </div>
         </section>
 

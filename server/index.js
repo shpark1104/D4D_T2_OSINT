@@ -63,9 +63,8 @@ function inferIocType(value) {
 
 // Runs regex + LLM IOC extraction over new text/files and merges into the
 // session's running IOC set (M2). StealthMole is deliberately NOT queried
-// here - the analyst drags specific IOC chips into the query tray and hits
-// "StealthMole 조회 실행" (or clicks/drags a single one) to control M3 queries
-// instead of firing every extracted IOC at once.
+// here - the analyst clicks or drags one IOC into the search field and runs a
+// single lookup to control M3 queries instead of firing every extracted IOC at once.
 async function runIntakePipeline(session, { text, files }) {
   const sources = [{ name: "message", content: text || "" }, ...files];
 
@@ -192,9 +191,14 @@ async function handleApi(req, res, pathname, query) {
         sessionsStore.markQueried(session, ioc);
         let result;
         try {
-          result = stealthmoleClient.ASYNC_MODULES.has(body.module)
-            ? await stealthmoleClient.asyncSearchAll("keyword", value, {})
-            : await stealthmoleClient.syncSearch(body.module, value, {});
+          if (stealthmoleClient.ASYNC_MODULES.has(body.module)) {
+            const route = stealthmoleClient.asyncRouteFor(ioc.type, body.module);
+            const indicator = route?.indicator || "keyword";
+            const queryText = route?.query ? route.query(value) : value;
+            result = await stealthmoleClient.asyncSearchAll(indicator, queryText, {});
+          } else {
+            result = await stealthmoleClient.syncSearch(body.module, value, {});
+          }
         } catch (error) {
           result = {
             module: body.module,
