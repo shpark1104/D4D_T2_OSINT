@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { buildRelationships, validReviewStatus } = require("./relationshipResolver");
 
 const sessions = new Map();
 
@@ -12,7 +13,9 @@ function createSession(title) {
     entities: [],
     queryResults: [],
     documents: new Map(),
-    queriedIocKeys: new Set()
+    queriedIocKeys: new Set(),
+    relationships: [],
+    relationshipReviews: new Map()
   };
   sessions.set(session.id, session);
   return session;
@@ -36,6 +39,7 @@ function addMessage(session, { role = "user", text = "", files = [] }) {
 
 function setIocs(session, iocs) {
   session.iocs = iocs;
+  refreshRelationships(session);
 }
 
 function addEntities(session, entities) {
@@ -46,6 +50,7 @@ function addEntities(session, entities) {
     seen.add(key);
     session.entities.push(entity);
   }
+  refreshRelationships(session);
 }
 
 // Flattens StealthMole query results into a per-document index the UI can
@@ -78,6 +83,7 @@ function addQueryResults(session, queryResultsByIoc) {
       }
     }
   }
+  refreshRelationships(session);
 }
 
 function listDocuments(session, { module, sort = "recent", cursor = 0, limit = 20 } = {}) {
@@ -116,6 +122,30 @@ function markQueried(session, ioc) {
   session.queriedIocKeys.add(iocKey(ioc));
 }
 
+function refreshRelationships(session, targetIocs = null) {
+  const relationshipSession = targetIocs?.length ? { ...session, iocs: targetIocs } : session;
+  const relationships = buildRelationships(relationshipSession, session.relationshipReviews);
+  session.relationships = relationships;
+  return relationships;
+}
+
+function listRelationships(session) {
+  return session.relationships || [];
+}
+
+function updateRelationshipStatus(session, relationshipId, status) {
+  if (!validReviewStatus(status)) {
+    const error = new Error("Invalid relationship status");
+    error.status = 400;
+    throw error;
+  }
+  const existing = (session.relationships || []).find((item) => item.id === relationshipId);
+  if (!existing) return null;
+  session.relationshipReviews.set(relationshipId, status);
+  refreshRelationships(session);
+  return session.relationships.find((item) => item.id === relationshipId) || { ...existing, status, reviewStatus: status };
+}
+
 module.exports = {
   createSession,
   getSession,
@@ -126,5 +156,8 @@ module.exports = {
   listDocuments,
   getDocument,
   isQueried,
-  markQueried
+  markQueried,
+  refreshRelationships,
+  listRelationships,
+  updateRelationshipStatus
 };

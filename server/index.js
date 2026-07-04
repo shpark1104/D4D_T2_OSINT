@@ -6,6 +6,7 @@ const { extractIocsFromText, mergeIocs } = require("./iocExtractor");
 const { extractIocsWithLlm } = require("./llmIocExtractor");
 const { getSemanticHighlights } = require("./semanticHighlighter");
 const stealthmoleClient = require("./stealthmoleClient");
+const walletExplorer = require("./walletExplorer");
 const sessionsStore = require("./sessions");
 
 const PUBLIC_DIR = path.join(process.cwd(), "public");
@@ -44,6 +45,7 @@ function serializeSession(session) {
     messages: session.messages,
     iocs: session.iocs.map((ioc) => ({ ...ioc, queried: sessionsStore.isQueried(session, ioc) })),
     entities: session.entities,
+    relationships: sessionsStore.listRelationships(session),
     documentCount: session.documents.size,
     moduleCounts
   };
@@ -99,6 +101,13 @@ async function handleApi(req, res, pathname, query) {
     return sendJson(res, 200, quotas);
   }
 
+  if (req.method === "GET" && pathname === "/api/wallet/btc/neighbors") {
+    const address = query.get("address") || "";
+    const limit = Number(query.get("limit") || 5);
+    const neighbors = await walletExplorer.getBtcNeighbors(address, { limit });
+    return sendJson(res, 200, neighbors);
+  }
+
   if (req.method === "POST" && pathname === "/api/sessions") {
     const body = await readJson(req);
     const session = sessionsStore.createSession(body.title);
@@ -129,6 +138,26 @@ async function handleApi(req, res, pathname, query) {
       const text = String(body.text || "");
       const highlights = await getSemanticHighlights(text);
       return sendJson(res, 200, { enabled: llm.enabled, highlights });
+    }
+
+    if (req.method === "POST" && rest === "/relationships") {
+      const body = await readJson(req);
+      const targetIocs = Array.isArray(body.iocs)
+        ? body.iocs
+            .map((ioc) => ({ type: ioc.type || inferIocType(ioc.value || ""), value: String(ioc.value || "").trim() }))
+            .filter((ioc) => ioc.value)
+        : [];
+      const relationships = targetIocs.length ? sessionsStore.refreshRelationships(session, targetIocs) : [];
+      return sendJson(res, 200, { relationships });
+    }
+
+    const relationshipMatch = rest.match(/^\/relationships\/([^/]+)$/);
+    if (relationshipMatch && req.method === "PATCH") {
+      const relationshipId = decodeURIComponent(relationshipMatch[1]);
+      const body = await readJson(req);
+      const updated = sessionsStore.updateRelationshipStatus(session, relationshipId, body.status);
+      if (!updated) return sendJson(res, 404, { detail: "Relationship candidate not found" });
+      return sendJson(res, 200, updated);
     }
 
     if (req.method === "POST" && rest === "/query") {

@@ -20,6 +20,7 @@ that teammates can read, run, and extend quickly.
 - Lets analysts maintain a separate interest Node list, rename those nodes, and reopen them.
 - Adds submitted evidence automatically to the interest Node list.
 - Shows OpenAI semantic highlights as underlines when `OPENAI_API_KEY` is configured.
+- Extracts review-only relationship candidates for selected interest IOCs through the left IOC widget popup.
 - Shows a wallet graph only for selected Bitcoin/Ethereum wallet IOC searches.
 - Supports dragging wallet graph nodes into the interest IOC list.
 
@@ -27,7 +28,7 @@ that teammates can read, run, and extend quickly.
 
 The first screen is the workbench, not a landing page.
 
-- Left: interest IOC list, interest Node list, LLM highlight toggle, quota display.
+- Left: interest IOC list with relationship extraction, interest Node list, LLM highlight toggle, quota display.
 - Center: one active node/document/evidence viewer, semantic underline rendering, optional wallet graph.
 - Right: evidence submission, direct keyword/module search, IOC lookup queue, current search results.
 
@@ -40,6 +41,7 @@ Important interaction details:
 - Clicking a result opens its full detail in the center viewer.
 - The center viewer can add the currently displayed node to interest Nodes with the `+` button.
 - Interest Nodes can be renamed from the left widget with the pen icon.
+- The relationship button in the interest IOC widget runs candidate extraction only for currently selected interest IOCs.
 
 ## Quick Start
 
@@ -123,6 +125,7 @@ LLM-enabled paths:
 
 - `server/llmIocExtractor.js`: optional semantic IOC/entity extraction during evidence submission.
 - `server/semanticHighlighter.js`: semantic underline extraction for viewer text.
+- `server/relationshipResolver.js`: review-only relationship candidates using selected IOCs, LLM entities, and lookup result documents.
 - `POST /api/sessions/:id/semantic`: semantic highlights for submitted evidence currently shown in the viewer.
 - `GET /api/sessions/:id/documents/:docId/semantic`: semantic highlights for opened search-result documents.
 
@@ -152,13 +155,14 @@ Behavior:
 
 - Enabled only when the active query is a Bitcoin or Ethereum wallet IOC.
 - Initially renders only the selected wallet address.
-- Clicking the selected wallet reveals up to five linked wallet addresses found in current results.
+- Clicking the selected Bitcoin wallet calls the transaction explorer endpoint and reveals up to five real transaction counterparties.
 - Dragging a wallet node to the interest IOC list registers it as an IOC.
 - Clicking a linked wallet starts a new wallet lookup for that address.
 - Nodes show only the first five address characters.
 - Node explorer button links to `mempool.space` for Bitcoin and `etherscan.io` for Ethereum.
 
-The graph is intentionally simple and data-light. It is a hackathon visualization aid, not a blockchain analytics engine.
+Bitcoin counterparties are fetched independently from StealthMole through `mempool.space`.
+The graph is intentionally simple and data-light. It is a hackathon visualization aid, not a full blockchain analytics engine.
 
 ## Project Files
 
@@ -174,8 +178,10 @@ server/sessions.js            In-memory session/document/query store
 server/iocExtractor.js        Regex IOC extraction and defanging
 server/llmClient.js           Thin OpenAI Chat Completions wrapper
 server/llmIocExtractor.js     LLM-assisted IOC/entity extraction
+server/relationshipResolver.js Interest IOC relationship candidate resolver
 server/semanticHighlighter.js LLM semantic underline extraction
 server/stealthmoleClient.js   StealthMole auth, routing, cache, normalization
+server/walletExplorer.js      Bitcoin transaction counterparty lookup
 
 public/index.html             Workbench shell
 public/app.js                 Browser state, drag/drop, viewer, search orchestration
@@ -225,8 +231,9 @@ Expected live response shape:
 - No queue system.
 - No formal test suite.
 - `cdf` file-download workflows are not integrated into the current viewer.
+- Relationship extraction produces analyst-review candidates, not confirmed entity merges.
 - TT node detail is fetched lazily only when a result is opened.
-- Wallet graph links depend on wallets appearing in normalized result text or raw response fields.
+- Bitcoin wallet graph links depend on public transaction data from `mempool.space`; Ethereum transaction expansion is not implemented yet.
 
 ## Suggested Next Work
 
@@ -234,4 +241,4 @@ Expected live response shape:
 2. Add a real test harness for extractor, StealthMole normalization, and frontend state transitions.
 3. Add explicit `cdf` file search/download workflow if the demo scope needs file evidence.
 4. Improve TT node detail extraction for channel/message/user variants.
-5. Add entity resolution once the desired M6 model is clearer.
+5. Add durable entity profiles and merge decisions once the desired M6 model is clearer.

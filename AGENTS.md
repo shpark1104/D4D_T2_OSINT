@@ -23,7 +23,8 @@ Current analyst workflow:
 7. Analyst clicks a result to lazily load full node/document detail into the center viewer.
 8. Analyst can add the currently displayed node to interest Nodes with the `+` button.
 9. Analyst can rename interest Nodes from the left widget with the pen icon.
-10. For Bitcoin/Ethereum wallet IOC lookups, the wallet graph is enabled in the center viewer.
+10. Analyst can run relationship candidate extraction from the interest IOC widget.
+11. For Bitcoin/Ethereum wallet IOC lookups, the wallet graph is enabled in the center viewer.
 
 The UI is intentionally dense and operational: left interests, center viewer, right search/results.
 
@@ -43,6 +44,7 @@ Implemented:
 - TT node detail drill-down on document open.
 - Interest IOC and interest Node widgets.
 - Analyst evidence as an automatically registered interest Node.
+- Interest-IOC relationship candidate popup using selected IOCs, LLM entities, and lookup result documents.
 - Wallet graph module in `public/walletGraph.js`.
 
 Still intentionally incomplete:
@@ -50,7 +52,7 @@ Still intentionally incomplete:
 - Durable storage.
 - Authentication/authorization.
 - Production queueing.
-- Full entity resolution.
+- Durable entity profiles and confirmed merge workflow.
 - STIX export.
 - Full dashboard/graph analytics.
 - `cdf` file search/download UI.
@@ -116,6 +118,7 @@ Keep module boundaries explicit:
 - `server/iocExtractor.js`: deterministic IOC extraction, normalization, defanging.
 - `server/llmClient.js`: thin OpenAI Chat Completions wrapper and JSON extraction.
 - `server/llmIocExtractor.js`: LLM IOC/entity extraction prompts.
+- `server/relationshipResolver.js`: review-only relationship candidate generation.
 - `server/semanticHighlighter.js`: LLM semantic highlight prompts and offset matching.
 - `server/stealthmoleClient.js`: StealthMole auth, API calling, cache, route table, result normalization.
 - `public/app.js`: browser state, drag/drop, viewer rendering, query orchestration.
@@ -197,6 +200,7 @@ LLM stages:
 
 - Evidence intake IOC/entity extraction.
 - Semantic highlight extraction for evidence and opened documents.
+- Relationship candidate extraction uses LLM-extracted entities plus selected interest IOCs and lookup result documents. It does not call the LLM again.
 
 Semantic highlight response shape:
 
@@ -224,6 +228,7 @@ Keep the interface operational and analyst-focused.
 Layout:
 
 - Left: interest IOC list, interest Node list, LLM toggle, quota.
+- Interest IOC widget includes the relationship extraction action.
 - Center: exactly one active node/document/evidence viewer and optional wallet graph.
 - Right: evidence submission, keyword/module search, IOC lookup queue, latest results.
 
@@ -233,6 +238,8 @@ UX rules:
 - Do not auto-query every extracted IOC.
 - IOC highlights should be clickable to register selected IOCs.
 - Interest IOCs should be draggable to the lookup queue.
+- Relationship extraction should run from the interest IOC widget and consider only currently selected interest IOCs.
+- Relationship candidates should appear in a popup and be clearly treated as analyst-review candidates.
 - Search results should be draggable to interest Nodes.
 - Submitted evidence should be auto-registered as an interest Node.
 - Search results should clear at the start of every new query.
@@ -259,14 +266,15 @@ Behavior:
 
 - Only enable for `btc_address` and `eth_address` IOC searches.
 - Initially render only the selected address.
-- On selected-node click, reveal linked wallet nodes found in the current result payload.
-- Limit visible linked wallet nodes to five.
+- On selected Bitcoin node click, call the independent transaction explorer endpoint and reveal real transaction counterparties.
+- Limit visible transaction counterparty nodes to five.
 - Dragging graph nodes to interest IOC list should register the wallet IOC.
 - Linked wallet click may start a new wallet lookup.
 - Show only first five address characters inside the node.
 - Add explorer link controls:
   - Bitcoin -> `mempool.space`
   - Ethereum -> `etherscan.io`
+- Do not rely on StealthMole search-result text to construct the Bitcoin transaction graph.
 
 Do not turn this into a broad graph engine unless the task explicitly asks for M7 work.
 
@@ -307,4 +315,4 @@ Do not turn this into a broad graph engine unless the task explicitly asks for M
 3. Add browser-level smoke tests for drag/drop and viewer rendering.
 4. Design a separate `cdf` search/download flow if file evidence becomes important.
 5. Improve TT node detail parsing for user/channel/message variants.
-6. Implement entity resolution only after the desired M6 data model is agreed.
+6. Design durable entity profiles and merge decisions only after the desired M6 data model is agreed.

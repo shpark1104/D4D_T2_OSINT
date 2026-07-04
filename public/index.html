@@ -17,7 +17,18 @@
         <section class="panel">
           <div class="panel-head">
             <h2>관심 IOC</h2>
-            <span id="interestIocCount" class="count">0</span>
+            <div class="panel-tools">
+              <button id="extractRelationshipsBtn" class="icon-button secondary" type="button" title="관심 IOC 관계 추출" aria-label="관심 IOC 관계 추출">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="6" cy="12" r="3"></circle>
+                  <circle cx="18" cy="6" r="3"></circle>
+                  <circle cx="18" cy="18" r="3"></circle>
+                  <path d="M8.6 10.8 15.4 7.2"></path>
+                  <path d="M8.6 13.2 15.4 16.8"></path>
+                </svg>
+              </button>
+              <span id="interestIocCount" class="count">0</span>
+            </div>
           </div>
           <div id="interestIocList" class="watch-list muted">가운데 뷰어의 IOC 하이라이트를 클릭해서 등록</div>
         </section>
@@ -128,6 +139,20 @@
 
     <div id="selectionMenu" class="selection-menu" hidden>
       <button id="selectionSearchBtn" type="button">선택어 검색</button>
+    </div>
+
+    <div id="relationshipModal" class="modal" hidden>
+      <section class="modal-card relationship-modal-card">
+        <header class="modal-head">
+          <div>
+            <span class="eyebrow">LLM relationship extraction</span>
+            <h2>관계 후보</h2>
+          </div>
+          <button id="closeRelationshipModal" class="icon-button secondary" type="button" title="닫기" aria-label="닫기">x</button>
+        </header>
+        <div id="relationshipSummary" class="muted relationship-summary">-</div>
+        <div id="relationshipList" class="relationship-list muted">관심 IOC를 등록한 뒤 관계를 추출하세요.</div>
+      </section>
     </div>
 
     <script src="/walletGraph.js"></script>

@@ -33,7 +33,8 @@ const state = {
   currentNode: null,
   semanticHighlights: null,
   semanticEnabled: true,
-  walletGraph: null
+  walletGraph: null,
+  relationships: []
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -68,13 +69,36 @@ function nodeTypeLabel(node) {
 }
 
 async function api(path, options = {}) {
+  const { headers, ...fetchOptions } = options;
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options
+    ...fetchOptions,
+    headers: { "Content-Type": "application/json", ...(headers || {}) }
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Request failed");
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.detail || "Request failed");
+    error.status = response.status;
+    error.detail = data.detail;
+    throw error;
+  }
   return data;
+}
+
+async function createSession() {
+  state.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "New incident" }) });
+  return state.session;
+}
+
+async function sessionApi(pathForSession, options = {}) {
+  if (!state.session?.id) await createSession();
+  try {
+    return await api(pathForSession(state.session.id), options);
+  } catch (error) {
+    if (error.status !== 404 || error.detail !== "Session not found") throw error;
+    console.warn("Session was lost on the server; creating a fresh session and retrying once.");
+    await createSession();
+    return api(pathForSession(state.session.id), options);
+  }
 }
 
 function setDrag(event, type, payload) {
@@ -194,8 +218,27 @@ function removeInterestIoc(ioc) {
   renderStageTray();
 }
 
+async function copyText(value) {
+  const text = String(value || "");
+  if (!text) return;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const input = document.createElement("textarea");
+  input.value = text;
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  document.body.appendChild(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
+}
+
 function renderInterestIocs() {
   const list = $("#interestIocList");
+  const relationshipButton = $("#extractRelationshipsBtn");
+  if (relationshipButton) relationshipButton.disabled = !state.interestIocs.length;
   $("#interestIocCount").textContent = String(state.interestIocs.length);
   if (!state.interestIocs.length) {
     list.className = "watch-list drop-target muted";
@@ -214,10 +257,22 @@ function renderInterestIocs() {
         <strong>${escapeHtml(ioc.type)}</strong>
         <span>${escapeHtml(ioc.value)}</span>
       </div>
-      <button type="button" title="제거">x</button>
+      <div class="watch-actions vertical">
+        <button class="remove-ioc-btn" type="button" title="제거">x</button>
+        <button class="copy-ioc-btn" type="button" title="복사" aria-label="복사">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+        </button>
+      </div>
     `;
     row.addEventListener("dragstart", (event) => setDrag(event, DRAG_IOC, ioc));
-    row.querySelector("button").addEventListener("click", () => removeInterestIoc(ioc));
+    row.querySelector(".remove-ioc-btn").addEventListener("click", () => removeInterestIoc(ioc));
+    row.querySelector(".copy-ioc-btn").addEventListener("click", (event) => {
+      event.stopPropagation();
+      copyText(ioc.value).catch((error) => alert(`복사 실패: ${error.message}`));
+    });
     list.appendChild(row);
   }
 }
@@ -397,7 +452,7 @@ async function analyzeSources() {
   $("#analyze").textContent = "제출 중...";
   setViewerLoading(true, state.llmEnabled ? "자료 제출 중... OpenAI 보조 분석 실행 중" : "자료 제출 중...");
   try {
-    const session = await api(`/api/sessions/${state.session.id}/messages`, {
+    const session = await sessionApi((sessionId) => `/api/sessions/${sessionId}/messages`, {
       method: "POST",
       body: JSON.stringify({ message, files })
     });
@@ -636,22 +691,71 @@ function clearWalletGraph() {
   if (window.WalletGraph) window.WalletGraph.clear($("#walletGraph"));
 }
 
-function renderWalletGraphForQuery(walletIoc, queryResponse, options = {}) {
-  if (!window.WalletGraph || !walletIoc) return;
-  const walletResults = (queryResponse.results || []).filter(
-    (result) =>
-      result.query_ioc?.type === walletIoc.type &&
-      String(result.query_ioc.value || "").toLowerCase() === walletIoc.value.toLowerCase()
-  );
-  const graph = window.WalletGraph.build(walletIoc.value, walletResults);
-  graph.expanded = Boolean(options.expanded);
+async function loadWalletNeighbors(address, type) {
+  if (type !== "btc_address") {
+    throw new Error("Ethereum transaction graph is not configured yet");
+  }
+  return api(`/api/wallet/btc/neighbors?address=${encodeURIComponent(address)}&limit=5`);
+}
+
+function renderWalletGraph(graph) {
   state.walletGraph = graph;
   window.WalletGraph.render($("#walletGraph"), graph, {
+    loadNeighbors: loadWalletNeighbors,
     onAddressClick: (address, type) => {
-      submitQuery({ iocs: [{ type, value: address }] }, { expandWalletGraph: true }).catch((error) =>
-        alert(`조회 실패: ${error.message}`)
-      );
+      renderWalletGraphForQuery({ type, value: address }, { results: [] });
     }
+  });
+}
+
+function renderWalletGraphForQuery(walletIoc, queryResponse = { results: [] }, options = {}) {
+  if (!window.WalletGraph || !walletIoc) return;
+  const sameGraph =
+    state.walletGraph &&
+    String(state.walletGraph.address || "").toLowerCase() === String(walletIoc.value || "").toLowerCase();
+  const graph = options.preserveExisting && sameGraph ? state.walletGraph : window.WalletGraph.build(walletIoc.value, []);
+  if (Object.prototype.hasOwnProperty.call(options, "expanded")) {
+    graph.expanded = Boolean(options.expanded);
+  }
+  renderWalletGraph(graph);
+}
+
+function addWalletIocToGraph(ioc) {
+  if (!ioc || ioc.type !== "btc_address" || !BTC_ADDRESS_PATTERN.test(String(ioc.value || "").trim())) return;
+  const address = String(ioc.value).trim();
+  const graph = state.walletGraph || window.WalletGraph.build(address, []);
+  window.WalletGraph.addSeed(graph, address);
+  renderWalletGraph(graph);
+}
+
+function makeWalletGraphDropTarget(element) {
+  element.addEventListener("dragover", (event) => {
+    if (!hasDragType(event, DRAG_IOC)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    $("#walletGraph").hidden = false;
+    element.classList.add("wallet-drag-over");
+    $("#walletGraph").classList.add("drag-over");
+  });
+
+  element.addEventListener("dragleave", (event) => {
+    if (element.contains(event.relatedTarget)) return;
+    element.classList.remove("wallet-drag-over");
+    $("#walletGraph").classList.remove("drag-over");
+    if (!state.walletGraph) clearWalletGraph();
+  });
+
+  element.addEventListener("drop", (event) => {
+    const ioc = readDrag(event, DRAG_IOC);
+    event.preventDefault();
+    event.stopPropagation();
+    element.classList.remove("wallet-drag-over");
+    $("#walletGraph").classList.remove("drag-over");
+    if (!ioc || ioc.type !== "btc_address") {
+      if (!state.walletGraph) clearWalletGraph();
+      return;
+    }
+    addWalletIocToGraph(ioc);
   });
 }
 
@@ -737,7 +841,9 @@ function renderViewer() {
 async function openDocument(docId) {
   setViewerLoading(true, "노드 전문 조회 중...");
   try {
-    const doc = await api(`/api/sessions/${state.session.id}/documents/${encodeURIComponent(docId)}`);
+    const doc = await sessionApi(
+      (sessionId) => `/api/sessions/${sessionId}/documents/${encodeURIComponent(docId)}`
+    );
     state.currentDoc = doc;
     state.currentNode = makeNodePayload(doc);
     state.semanticHighlights = null;
@@ -789,8 +895,10 @@ async function loadSemanticHighlights() {
   setViewerLoading(true, state.llmEnabled ? "OpenAI 의미 하이라이트 분석 중..." : "의미 하이라이트 확인 중...");
   try {
     const data = state.currentDoc
-      ? await api(`/api/sessions/${state.session.id}/documents/${encodeURIComponent(state.currentDoc.id)}/semantic`)
-      : await api(`/api/sessions/${state.session.id}/semantic`, {
+      ? await sessionApi(
+          (sessionId) => `/api/sessions/${sessionId}/documents/${encodeURIComponent(state.currentDoc.id)}/semantic`
+        )
+      : await sessionApi((sessionId) => `/api/sessions/${sessionId}/semantic`, {
           method: "POST",
           body: JSON.stringify({ text: state.currentView.content || "" })
         });
@@ -822,17 +930,23 @@ async function setSemanticEnabled(enabled) {
 async function submitQuery(body, options = {}) {
   const walletIoc = getWalletIocFromQuery(body);
   clearSearchResults("조회 중...");
-  setViewerLoading(true, "검색 결과 조회 중...");
+  if (walletIoc) {
+    renderWalletGraphForQuery(walletIoc, { results: [] }, { preserveExisting: true });
+  } else {
+    setViewerLoading(true, "검색 결과 조회 중...");
+  }
   try {
-    const queryResponse = await api(`/api/sessions/${state.session.id}/query`, {
+    const queryResponse = await sessionApi((sessionId) => `/api/sessions/${sessionId}/query`, {
       method: "POST",
       body: JSON.stringify(body)
     });
-    state.session = await api(`/api/sessions/${state.session.id}`);
+    state.session = await sessionApi((sessionId) => `/api/sessions/${sessionId}`);
     renderInterestIocs();
     setSearchResultsFromQuery(queryResponse);
     if (walletIoc) {
-      renderWalletGraphForQuery(walletIoc, queryResponse, { expanded: options.expandWalletGraph });
+      const graphOptions = { preserveExisting: true };
+      if (options.expandWalletGraph !== undefined) graphOptions.expanded = options.expandWalletGraph;
+      renderWalletGraphForQuery(walletIoc, { results: [] }, graphOptions);
     } else {
       clearWalletGraph();
     }
@@ -840,8 +954,149 @@ async function submitQuery(body, options = {}) {
     clearSearchResults(`조회 실패: ${error.message}`);
     throw error;
   } finally {
-    setViewerLoading(false);
+    if (!walletIoc) setViewerLoading(false);
   }
+}
+
+// --- Relationship candidates popup ---
+
+const RELATIONSHIP_STATUS_LABELS = {
+  weak_candidate: "약한 후보",
+  review_needed: "검토 필요",
+  probable_same_cluster: "동일 클러스터 가능",
+  rejected: "제외",
+  confirmed_by_analyst: "분석가 확인"
+};
+
+const RELATIONSHIP_LABELS = {
+  same_identifier_observed: "동일 식별자 관측",
+  appeared_with: "동일 결과 내 동시 관측",
+  possible_same_actor: "동일 행위자 가능성",
+  repeated_alias_cluster: "반복 alias 클러스터"
+};
+
+function relationshipLabel(value) {
+  return RELATIONSHIP_LABELS[value] || value || "관계 후보";
+}
+
+function relationshipStatusOptions(current) {
+  return Object.entries(RELATIONSHIP_STATUS_LABELS)
+    .map(
+      ([value, label]) =>
+        `<option value="${escapeHtml(value)}" ${value === current ? "selected" : ""}>${escapeHtml(label)}</option>`
+    )
+    .join("");
+}
+
+function relationshipReason(candidate) {
+  if (candidate.reason) return candidate.reason;
+  const evidence = candidate.evidence?.[0] || "주요 증거 없음";
+  if (candidate.score >= 0.75) {
+    return "강한 식별자 또는 반복 증거가 겹쳐 같은 활동 클러스터일 가능성이 높습니다. " + evidence;
+  }
+  if (candidate.score >= 0.5) {
+    return "같은 문서 또는 검색 결과에서 연결 단서가 관측되어 분석가 검토가 필요합니다. " + evidence;
+  }
+  return "연결 단서는 약하지만 관련 맥락에 함께 등장해 낮은 우선순위 후보로 표시됩니다. " + evidence;
+}
+
+function openRelationshipModal() {
+  const modal = $("#relationshipModal");
+  if (modal) modal.hidden = false;
+}
+
+function closeRelationshipModal() {
+  const modal = $("#relationshipModal");
+  if (modal) modal.hidden = true;
+}
+
+function renderRelationshipModal(relationships = state.relationships) {
+  const list = $("#relationshipList");
+  const summary = $("#relationshipSummary");
+  if (!list || !summary) return;
+
+  const count = relationships.length;
+  summary.textContent = count
+    ? `관심 IOC ${state.interestIocs.length}개 기준 관계 후보 ${count}건`
+    : `관심 IOC ${state.interestIocs.length}개 기준으로 표시할 관계 후보가 없습니다.`;
+
+  if (!count) {
+    list.className = "relationship-list muted";
+    list.textContent = state.interestIocs.length
+      ? "조회된 결과 문서에서 관심 IOC와 연결되는 alias, 지갑, 이메일, 도메인 단서를 찾지 못했습니다."
+      : "관심 IOC를 등록한 뒤 관계를 추출하세요.";
+    return;
+  }
+
+  list.className = "relationship-list";
+  list.innerHTML = "";
+  for (const candidate of relationships) {
+    const card = document.createElement("article");
+    card.className = `relationship-card status-${candidate.status || "weak_candidate"}`;
+    card.innerHTML = `
+      <div class="relationship-card-head">
+        <div class="relationship-pair">
+          <strong>${escapeHtml(candidate.subject)}</strong>
+          <span>${escapeHtml(relationshipLabel(candidate.relation))}</span>
+          <strong>${escapeHtml(candidate.object)}</strong>
+        </div>
+        <span class="score-badge">${Math.round(Number(candidate.score || 0) * 100)}%</span>
+      </div>
+      <p class="relationship-reason">${escapeHtml(relationshipReason(candidate))}</p>
+      <div class="relationship-review-row">
+        <label>
+          <span>검토 상태</span>
+          <select data-relationship-status-id="${escapeHtml(candidate.id)}">
+            ${relationshipStatusOptions(candidate.status)}
+          </select>
+        </label>
+      </div>
+      <ul class="relationship-evidence">
+        ${(candidate.evidence || []).slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+      <div class="relationship-sources">${(candidate.sources || []).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
+    `;
+    list.appendChild(card);
+  }
+}
+
+async function extractRelationshipsForInterestIocs() {
+  if (!state.interestIocs.length) {
+    state.relationships = [];
+    renderRelationshipModal();
+    openRelationshipModal();
+    return;
+  }
+
+  const button = $("#extractRelationshipsBtn");
+  if (button) button.disabled = true;
+  try {
+    const data = await sessionApi((sessionId) => `/api/sessions/${sessionId}/relationships`, {
+      method: "POST",
+      body: JSON.stringify({ iocs: state.interestIocs })
+    });
+    state.relationships = data.relationships || [];
+    if (state.session) state.session.relationships = state.relationships;
+    renderRelationshipModal();
+    openRelationshipModal();
+  } catch (error) {
+    alert(`관계 추출 실패: ${error.message}`);
+  } finally {
+    if (button) button.disabled = !state.interestIocs.length;
+  }
+}
+
+async function updateRelationshipReview(relationshipId, status) {
+  if (!relationshipId || !status) return;
+  const updated = await sessionApi(
+    (sessionId) => `/api/sessions/${sessionId}/relationships/${encodeURIComponent(relationshipId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status })
+    }
+  );
+  state.relationships = state.relationships.map((candidate) => (candidate.id === updated.id ? updated : candidate));
+  renderRelationshipModal();
 }
 
 // --- Quota / boot ---
@@ -869,6 +1124,7 @@ function hideSelectionMenu() {
 
 function boot() {
   makeSearchPanelDropTarget($("#searchPanel"));
+  makeWalletGraphDropTarget($(".viewer-panel"));
 
   $("#sourceDropzone").addEventListener("click", () => $("#files").click());
   $("#sourceDropzone").addEventListener("dragover", (event) => {
@@ -902,6 +1158,18 @@ function boot() {
     setSemanticEnabled(event.target.checked).catch((error) => alert(`LLM 하이라이팅 실패: ${error.message}`));
   });
   $("#addCurrentNodeBtn").addEventListener("click", addCurrentNodeToInterest);
+  $("#extractRelationshipsBtn").addEventListener("click", extractRelationshipsForInterestIocs);
+  $("#closeRelationshipModal").addEventListener("click", closeRelationshipModal);
+  $("#relationshipModal").addEventListener("mousedown", (event) => {
+    if (event.target.id === "relationshipModal") closeRelationshipModal();
+  });
+  $("#relationshipList").addEventListener("change", (event) => {
+    const target = event.target.closest("[data-relationship-status-id]");
+    if (!target) return;
+    updateRelationshipReview(target.dataset.relationshipStatusId, target.value).catch((error) =>
+      alert(`관계 후보 상태 변경 실패: ${error.message}`)
+    );
+  });
 
   $("#document").addEventListener("click", (event) => {
     const target = event.target.closest(".hl-ioc");
@@ -941,7 +1209,7 @@ async function init() {
   $("#mode").textContent = `StealthMole: ${health.stealthmoleMock ? "mock" : "live"} · LLM: ${
     health.llmEnabled ? "on" : "off"
   }`;
-  state.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "New incident" }) });
+  await createSession();
   renderPendingFiles();
   renderInterestIocs();
   renderInterestNodes();
