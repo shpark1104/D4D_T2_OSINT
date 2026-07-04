@@ -301,7 +301,7 @@ function serveStatic(res, pathname) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
+async function requestHandler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (url.pathname.startsWith("/api/")) {
@@ -312,11 +312,28 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     sendJson(res, error.status || 500, { detail: error.message });
   }
-});
+}
 
-server.listen(port, host, () => {
-  console.log(`D4D CTI base running at http://${host}:${port}`);
-  console.log(`Local browser URL: http://localhost:${port}`);
-  console.log(`StealthMole mode: ${stealthmole.mockMode ? "mock" : "live"}`);
-  console.log(`LLM (OpenAI) mode: ${llm.enabled ? "enabled" : "disabled (no OPENAI_API_KEY)"}`);
-});
+const server = http.createServer(requestHandler);
+
+function startServer() {
+  if (server.listening) return server;
+  server.listen(port, host, () => {
+    console.log(`D4D CTI base running at http://${host}:${port}`);
+    console.log(`Local browser URL: http://localhost:${port}`);
+    console.log(`StealthMole mode: ${stealthmole.mockMode ? "mock" : "live"}`);
+    console.log(`LLM (OpenAI) mode: ${llm.enabled ? "enabled" : "disabled (no OPENAI_API_KEY)"}`);
+  });
+  return server;
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  handleApi,
+  requestHandler,
+  server,
+  startServer
+};

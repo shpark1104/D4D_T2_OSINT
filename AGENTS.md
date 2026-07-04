@@ -63,13 +63,14 @@ Still intentionally incomplete:
 npm run dev
 ```
 
-The app serves `public/` from `server/index.js`.
+The app starts from root `server.js`, which calls `server/index.js`. Keep the root entrypoint because Vercel detects it as the deployable Node HTTP server. `server/index.js` can still be run directly for local debugging.
 
 Node.js 18 or later is expected. The scaffold currently avoids external npm dependencies.
 
 Recommended syntax checks after JavaScript changes:
 
 ```bash
+node --check server.js
 node --check server/index.js
 node --check server/stealthmoleClient.js
 node --check server/relationshipResolver.js
@@ -109,13 +110,15 @@ Runtime behavior:
 - If StealthMole keys are present and `STEALTHMOLE_MOCK=false`, live StealthMole API calls are made.
 - If `OPENAI_API_KEY` is empty, LLM stages no-op gracefully.
 - `.env` must never be committed.
+- On Vercel, configure these values in Project Settings because local `.env` is not deployed.
 
 ## Architecture Boundaries
 
 Keep module boundaries explicit:
 
 - `server/config.js`: environment loading and runtime config only.
-- `server/index.js`: HTTP routing, static serving, endpoint orchestration.
+- `server.js`: root Node server entrypoint for local `npm start` and Vercel detection.
+- `server/index.js`: HTTP routing, static serving, endpoint orchestration, and exported server/start helpers.
 - `server/sessions.js`: in-memory session/document/query storage.
 - `server/iocExtractor.js`: deterministic IOC extraction, normalization, defanging.
 - `server/llmClient.js`: thin OpenAI Chat Completions wrapper and JSON extraction.

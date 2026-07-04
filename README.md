@@ -62,6 +62,32 @@ app can be reached from other devices on the same network when the firewall allo
 
 Node.js 18 or later is expected. There are no runtime npm dependencies.
 
+## Vercel Deployment
+
+The Vercel entrypoint is the root [server.js](./server.js), which starts the same plain Node.js HTTP server used locally. Keep this file at the repository root so Vercel can detect the app as a Node server instead of deploying only `public/` as a static site.
+
+Recommended Vercel settings:
+
+- Build command: leave empty or use the default install-only flow.
+- Output directory: leave empty.
+- Install command: default `npm install`.
+- Environment variables: configure the same keys from `.env.example` in the Vercel Project Settings.
+
+Required for live lookups/highlighting in Vercel:
+
+```bash
+STEALTHMOLE_BASE_URL=https://hackathon.stealthmole.com
+STEALTHMOLE_ACCESS_KEY=
+STEALTHMOLE_SECRET_KEY=
+STEALTHMOLE_MOCK=false
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
+```
+
+If `자료 제출 실패: Request failed` appears after deployment, check the deployed `/api/health` URL first. A 404 or HTML response usually means Vercel did not route requests to the Node server. A JSON response means the server is running and the next place to inspect is the Vercel Function log.
+
+Current sessions, submitted evidence, and search results are still in memory. On Vercel this is demo-suitable but not durable: cold starts, function instance changes, or redeploys can reset session state.
+
 ## Environment
 
 Use `.env` locally. Never commit real keys.
@@ -182,11 +208,11 @@ The graph is intentionally simple and data-light. It is a hackathon visualizatio
 ```text
 AGENTS.md                     Project rules and implementation notes for future agents
 CTI_개발_마일스톤.md           Milestone plan
-StealthMole_API_MANUAL_KR.md  Local StealthMole API manual copy
 package.json                  Node scripts and engine hint
+server.js                     Root Node server entrypoint for local start and Vercel
 
 server/config.js              .env loader and runtime config
-server/index.js               HTTP server, static serving, API routes
+server/index.js               HTTP routing, static serving, API routes
 server/sessions.js            In-memory session/document/query store
 server/iocExtractor.js        Regex IOC extraction and defanging
 server/llmClient.js           Thin OpenAI Chat Completions wrapper
@@ -207,6 +233,7 @@ public/walletGraph.js         Wallet-specific graph visualization
 There is no formal test suite yet. For now, run syntax checks on touched JavaScript:
 
 ```bash
+node --check server.js
 node --check server/index.js
 node --check server/stealthmoleClient.js
 node --check server/relationshipResolver.js
