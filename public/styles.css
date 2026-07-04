@@ -129,12 +129,32 @@ p {
   margin-bottom: 14px;
 }
 
+.brand-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  position: relative;
+  width: fit-content;
+  padding-right: 54px;
+}
+
 .brand h1 {
-  margin-bottom: 4px;
+  margin: 0;
   font-size: 22px;
 }
 
+.brand-logo {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: auto;
+  height: 44px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
 .brand p {
+  margin-top: 4px;
   margin-bottom: 0;
   font-size: 12px;
 }
