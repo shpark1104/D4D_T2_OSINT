@@ -34,6 +34,13 @@ function loadDotEnv() {
 
 loadDotEnv();
 
+const DEFAULT_OPENAI_TIMEOUT_MS = 60000;
+
+function parsePositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 const accessKey = process.env.STEALTHMOLE_ACCESS_KEY || "";
 const secretKey = process.env.STEALTHMOLE_SECRET_KEY || "";
 const mockFlag = String(process.env.STEALTHMOLE_MOCK || "").toLowerCase();
@@ -54,7 +61,7 @@ module.exports = {
     provider: "openai",
     apiKey: openaiKey,
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-    timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 8000),
+    timeoutMs: parsePositiveNumber(process.env.OPENAI_TIMEOUT_MS, DEFAULT_OPENAI_TIMEOUT_MS),
     enabled: Boolean(openaiKey)
   },
   limits: {

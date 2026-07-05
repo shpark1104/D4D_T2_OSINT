@@ -111,7 +111,9 @@ async function handleApi(req, res, pathname, query) {
     return sendJson(res, 200, {
       ok: true,
       stealthmoleMock: stealthmole.mockMode,
-      llmEnabled: llm.enabled
+      llmEnabled: llm.enabled,
+      llmModel: llm.model,
+      llmTimeoutMs: llm.timeoutMs
     });
   }
 

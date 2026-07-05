@@ -103,7 +103,7 @@ STEALTHMOLE_MOCK=true
 
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
-OPENAI_TIMEOUT_MS=8000
+OPENAI_TIMEOUT_MS=60000
 ```
 
 Runtime behavior:
@@ -111,7 +111,7 @@ Runtime behavior:
 - If StealthMole keys are empty or `STEALTHMOLE_MOCK=true`, mock responses are returned.
 - If StealthMole keys are present and `STEALTHMOLE_MOCK=false`, live StealthMole API calls are made.
 - If `OPENAI_API_KEY` is empty, LLM stages no-op gracefully.
-- `OPENAI_TIMEOUT_MS` bounds each OpenAI request so evidence submission can still complete with regex IOC extraction if LLM calls are slow.
+- `OPENAI_TIMEOUT_MS` bounds each OpenAI request. The default is 60000ms; keep it comfortably below the deployed Vercel function `maxDuration`.
 - `.env` must never be committed.
 - On Vercel, configure these values in Project Settings because local `.env` is not deployed.
 

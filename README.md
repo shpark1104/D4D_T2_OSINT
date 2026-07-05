@@ -82,10 +82,10 @@ STEALTHMOLE_SECRET_KEY=
 STEALTHMOLE_MOCK=false
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
-OPENAI_TIMEOUT_MS=8000
+OPENAI_TIMEOUT_MS=60000
 ```
 
-If `자료 제출 실패: Request failed` appears after deployment, check the deployed `/api/health` URL first. A 404 or HTML response usually means Vercel did not route requests to the API function. A JSON response means the API function is running and the next place to inspect is the Vercel Function log.
+The Vercel API function is configured in [vercel.json](./vercel.json) with `maxDuration: 300` so OpenAI-assisted evidence intake and semantic highlighting have more room than the old 30 second limit. If `자료 제출 실패: Request failed` appears after deployment, check the deployed `/api/health` URL first. A 404 or HTML response usually means Vercel did not route requests to the API function. A JSON response includes `llmTimeoutMs`, so you can confirm which OpenAI timeout value the deployed function is actually using before checking the Vercel Function log.
 
 Current sessions, submitted evidence, and search results are still in memory. On Vercel this is demo-suitable but not durable: cold starts, function instance changes, or redeploys can reset session state.
 
@@ -104,7 +104,7 @@ STEALTHMOLE_MOCK=true
 
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
-OPENAI_TIMEOUT_MS=8000
+OPENAI_TIMEOUT_MS=60000
 ```
 
 Behavior:
@@ -112,7 +112,7 @@ Behavior:
 - If StealthMole keys are empty, or `STEALTHMOLE_MOCK=true`, search and quota calls use synthetic mock data.
 - If `STEALTHMOLE_MOCK=false` and both StealthMole keys are present, the server uses the live API.
 - If `OPENAI_API_KEY` is empty, LLM IOC extraction and semantic highlighting no-op gracefully.
-- `OPENAI_TIMEOUT_MS` limits each OpenAI request so Vercel functions can return regex-based results instead of timing out the whole evidence submission.
+- `OPENAI_TIMEOUT_MS` limits each OpenAI request. The default is 60000ms; keep it below the Vercel function `maxDuration` enough to leave response overhead.
 - `.env` is ignored by git and should remain local.
 
 ## StealthMole Integration
