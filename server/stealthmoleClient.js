@@ -5,6 +5,12 @@ const { stealthmole } = require("./config");
 const SYNC_MODULES = new Set(["cl", "cb", "cds", "rm", "gm", "lm"]);
 const ASYNC_MODULES = new Set(["tt"]);
 
+function telegramSearchText(value) {
+  const text = String(value || "").trim();
+  const withoutHandlePrefix = text.replace(/^@+/, "");
+  return withoutHandlePrefix || text;
+}
+
 // IOC type -> StealthMole module routing table.
 const ROUTES = {
   ipv4: [{ module: "cds", kind: "sync", query: (v) => `ip:${v}` }],
@@ -23,7 +29,7 @@ const ROUTES = {
   sha256: [{ module: "tt", kind: "async", indicator: "hash" }],
   btc_address: [{ module: "tt", kind: "async", indicator: "bitcoin" }],
   eth_address: [{ module: "tt", kind: "async", indicator: "ethereum" }],
-  telegram: [{ module: "tt", kind: "async", indicator: "telegram" }],
+  telegram: [{ module: "tt", kind: "async", indicator: "telegram", query: telegramSearchText }],
   cve: [{ module: "tt", kind: "async", indicator: "cve" }],
   discord_id: [{ module: "tt", kind: "async", indicator: "discord" }],
   keyword: [
@@ -36,6 +42,10 @@ const ROUTES = {
 
 function routesFor(iocType) {
   return ROUTES[iocType] || ROUTES.keyword;
+}
+
+function asyncRouteFor(iocType, module = "tt") {
+  return routesFor(iocType).find((route) => route.kind === "async" && route.module === module);
 }
 
 // --- JWT (fresh per request; the API rejects a reused JWT with 401) ---
@@ -147,8 +157,10 @@ function compactText(...parts) {
     .join(" | ");
 }
 
-function present(value) {
-  return value ? "present" : "-";
+function displayField(label, value, options = {}) {
+  const text = cleanDisplayValue(value);
+  if (!text) return null;
+  return `${label}=${options.presenceOnly ? "present" : text}`;
 }
 
 function firstReadableLine(value, fallback) {
@@ -177,7 +189,11 @@ function targetLabel(target) {
     otherfile: "Other file",
     compressed: "Compressed file"
   };
-  return labels[target] || target || "Telegram Tracker";
+  if (labels[target]) return labels[target];
+  if (isTelegramMessageTarget(target)) return "Telegram message";
+  if (isTelegramChannelTarget(target)) return "Telegram channel";
+  if (isTelegramUserTarget(target)) return "Telegram user";
+  return target || "Telegram Tracker";
 }
 
 function isTelegramIndicator(indicator) {
@@ -264,11 +280,11 @@ function normalizeItem(module, item) {
         source_url: null,
         title: `Credential leak: ${item.email || item.domain || "unknown"}`,
         content: compactText(
-          `domain=${item.domain || "-"}`,
-          `email=${item.email || "-"}`,
-          `password=${present(item.password)}`,
-          `leaked_from=${item.leaked_from || "-"}`,
-          `leaked_date=${item.leaked_date || "-"}`
+          displayField("domain", item.domain),
+          displayField("email", item.email),
+          displayField("password", item.password, { presenceOnly: true }),
+          displayField("leaked_from", item.leaked_from),
+          displayField("leaked_date", item.leaked_date)
         ),
         timestamp: item.leaked_date || null,
         forum_name: item.leaked_from || "Credential Lookout",
@@ -281,7 +297,10 @@ function normalizeItem(module, item) {
         id: item.id,
         source_url: null,
         title: `Combo leak: ${item.user || "unknown"}`,
-        content: compactText(`user=${item.user || "-"}`, `password=${present(item.password)}`),
+        content: compactText(
+          displayField("user", item.user),
+          displayField("password", item.password, { presenceOnly: true })
+        ),
         timestamp: unixToIso(item.leakeddate),
         forum_name: "Combo Binder",
         author_alias: item.user || null,
@@ -294,12 +313,12 @@ function normalizeItem(module, item) {
         source_url: null,
         title: `Stealer log: ${item.host || "unknown host"}`,
         content: compactText(
-          `host=${item.host || "-"}`,
-          `user=${item.user || "-"}`,
-          `username=${item.username || "-"}`,
-          `password=${present(item.password)}`,
-          `ip=${item.ip || "-"}`,
-          `computer=${item.computername || "-"}`
+          displayField("host", item.host),
+          displayField("user", item.user),
+          displayField("username", item.username),
+          displayField("password", item.password, { presenceOnly: true }),
+          displayField("ip", item.ip),
+          displayField("computer", item.computername)
         ),
         timestamp: unixToIso(item.leakeddate),
         forum_name: "Compromised Data Set",
@@ -313,11 +332,11 @@ function normalizeItem(module, item) {
         source_url: item.proof_url || null,
         title: `${item.attack_group || "Unknown group"} -> ${item.victim || "unknown victim"}`,
         content: compactText(
-          `victim=${item.victim || "-"}`,
-          `site=${item.site || "-"}`,
-          `country=${item.country || "-"}`,
-          `sector=${item.sector || "-"}`,
-          item.proof_url && `proof=${item.proof_url}`
+          displayField("victim", item.victim),
+          displayField("site", item.site),
+          displayField("country", item.country),
+          displayField("sector", item.sector),
+          displayField("proof", item.proof_url)
         ),
         timestamp: unixToIso(item.detection_datetime),
         forum_name: item.attack_group || "Ransomware Monitoring",
@@ -546,7 +565,8 @@ async function queryIoc(ioc) {
         const result = await syncSearch(route.module, queryString, {});
         return { ...result, query_ioc: { type: ioc.type, value: ioc.value } };
       }
-      const result = await asyncSearchAll(route.indicator, ioc.value, {});
+      const queryText = route.query ? route.query(ioc.value) : ioc.value;
+      const result = await asyncSearchAll(route.indicator, queryText, {});
       return { ...result, query_ioc: { type: ioc.type, value: ioc.value } };
     })
   );
@@ -567,6 +587,7 @@ async function queryIoc(ioc) {
 
 module.exports = {
   routesFor,
+  asyncRouteFor,
   syncSearch,
   asyncSearchAll,
   queryIoc,

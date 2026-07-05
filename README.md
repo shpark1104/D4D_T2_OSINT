@@ -14,7 +14,7 @@ that teammates can read, run, and extend quickly.
 - Extracts IOC candidates with deterministic regex rules and optional OpenAI assistance.
 - Highlights extracted IOCs in the center viewer by IOC type.
 - Lets analysts click IOC highlights to add only selected IOCs to the left-side interest list.
-- Lets analysts drag interest IOCs into an API lookup queue, then run StealthMole lookups.
+- Lets analysts click or drag one interest IOC into the search field, then run a single StealthMole lookup.
 - Lists only the latest lookup response in the right-side results panel.
 - Lazily opens full node/document detail only when a result is clicked.
 - Lets analysts maintain a separate interest Node list, rename those nodes, and reopen them.
@@ -30,14 +30,15 @@ The first screen is the workbench, not a landing page.
 
 - Left: interest IOC list with relationship extraction, interest Node list, LLM highlight toggle, quota display.
 - Center: one active node/document/evidence viewer, semantic underline rendering, optional wallet graph.
-- Right: evidence submission, direct keyword/module search, IOC lookup queue, current search results.
+- Right: evidence submission, direct keyword/module search, single IOC search target, current search results.
 
 Important interaction details:
 
 - IOC candidates are not automatically queried.
 - Analyst evidence is submitted with `자료 제출`.
 - Submitted evidence is automatically registered as an interest Node.
-- Search results are cleared every time a new unified search or IOC queue lookup starts.
+- Search results are cleared every time a new unified search or single IOC lookup starts.
+- The search field keeps the last submitted lookup target visible after execution.
 - Clicking a result opens its full detail in the center viewer.
 - The center viewer can add the currently displayed node to interest Nodes with the `+` button.
 - Interest Nodes can be renamed from the left widget with the pen icon.
@@ -61,6 +62,33 @@ app can be reached from other devices on the same network when the firewall allo
 
 Node.js 18 or later is expected. There are no runtime npm dependencies.
 
+## Vercel Deployment
+
+Vercel serves static assets from [public/](./public) and routes `/api/*` through [vercel.json](./vercel.json) to [api/index.js](./api/index.js), which delegates to the same Node router used locally. The root [server.js](./server.js) remains the local Node server entrypoint.
+
+Recommended Vercel settings:
+
+- Build command: leave empty or use the default install-only flow.
+- Output directory: leave empty.
+- Install command: default `npm install`.
+- Environment variables: configure the same keys from `.env.example` in the Vercel Project Settings.
+
+Required for live lookups/highlighting in Vercel:
+
+```bash
+STEALTHMOLE_BASE_URL=https://hackathon.stealthmole.com
+STEALTHMOLE_ACCESS_KEY=
+STEALTHMOLE_SECRET_KEY=
+STEALTHMOLE_MOCK=false
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TIMEOUT_MS=8000
+```
+
+If `자료 제출 실패: Request failed` appears after deployment, check the deployed `/api/health` URL first. A 404 or HTML response usually means Vercel did not route requests to the API function. A JSON response means the API function is running and the next place to inspect is the Vercel Function log.
+
+Current sessions, submitted evidence, and search results are still in memory. On Vercel this is demo-suitable but not durable: cold starts, function instance changes, or redeploys can reset session state.
+
 ## Environment
 
 Use `.env` locally. Never commit real keys.
@@ -76,6 +104,7 @@ STEALTHMOLE_MOCK=true
 
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
+OPENAI_TIMEOUT_MS=8000
 ```
 
 Behavior:
@@ -83,6 +112,7 @@ Behavior:
 - If StealthMole keys are empty, or `STEALTHMOLE_MOCK=true`, search and quota calls use synthetic mock data.
 - If `STEALTHMOLE_MOCK=false` and both StealthMole keys are present, the server uses the live API.
 - If `OPENAI_API_KEY` is empty, LLM IOC extraction and semantic highlighting no-op gracefully.
+- `OPENAI_TIMEOUT_MS` limits each OpenAI request so Vercel functions can return regex-based results instead of timing out the whole evidence submission.
 - `.env` is ignored by git and should remain local.
 
 ## StealthMole Integration
@@ -111,12 +141,12 @@ Current automatic IOC routing:
 | `md5`, `sha1`, `sha256` | `tt` indicator `hash` |
 | `btc_address` | `tt` indicator `bitcoin` plus wallet graph |
 | `eth_address` | `tt` indicator `ethereum` plus wallet graph |
-| `telegram` | `tt` indicator `telegram` |
+| `telegram` | `tt` indicator `telegram`; leading `@` is stripped only for API search text |
 | `cve` | `tt` indicator `cve` |
 | `discord_id` | `tt` indicator `discord` |
 | `keyword` | `tt` keyword plus `rm`, `gm`, `lm` plain query |
 
-Manual module search from the right panel bypasses this routing table and calls the selected module directly.
+Manual sync-module search from the right panel calls the selected module directly. Manual `TT` search uses the inferred TT indicator when the query looks like a known IOC, otherwise it falls back to `keyword`.
 
 ### TT Target Handling
 
@@ -181,11 +211,13 @@ The graph is intentionally simple and data-light. It is a hackathon visualizatio
 ```text
 AGENTS.md                     Project rules and implementation notes for future agents
 CTI_개발_마일스톤.md           Milestone plan
-StealthMole_API_MANUAL_KR.md  Local StealthMole API manual copy
 package.json                  Node scripts and engine hint
+server.js                     Root Node server entrypoint for local start and Vercel
 
+api/index.js                  Vercel API function for /api/* rewrites
+vercel.json                   Vercel API rewrite and function settings
 server/config.js              .env loader and runtime config
-server/index.js               HTTP server, static serving, API routes
+server/index.js               HTTP routing, static serving, API routes
 server/sessions.js            In-memory session/document/query store
 server/iocExtractor.js        Regex IOC extraction and defanging
 server/llmClient.js           Thin OpenAI Chat Completions wrapper
@@ -206,6 +238,7 @@ public/walletGraph.js         Wallet-specific graph visualization
 There is no formal test suite yet. For now, run syntax checks on touched JavaScript:
 
 ```bash
+node --check server.js
 node --check server/index.js
 node --check server/stealthmoleClient.js
 node --check server/relationshipResolver.js
@@ -235,6 +268,7 @@ Expected live response shape:
 - Never commit `.env`, real API keys, JWTs, incident files, or private customer data.
 - Do not log full JWTs, raw secrets, or full credential leak passwords.
 - The current UI intentionally displays `password=present` rather than secret values in normalized result snippets.
+- Normalized result snippets omit empty placeholder fields such as `-`, `N/A`, `unknown`, and `null`.
 - Raw uploads are not persisted to disk; current state is in-memory and resets on server restart.
 - Live StealthMole requests can consume quota. Keep limits low during probes.
 

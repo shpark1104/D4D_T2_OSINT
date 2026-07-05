@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "description": "Node.js base site for CTI ingestion, IOC extraction, StealthMole search, document highlighting, and entity resolution.",
-  "main": "server/index.js",
+  "main": "server.js",
   "scripts": {
-    "dev": "node server/index.js",
-    "start": "node server/index.js"
+    "dev": "node server.js",
+    "start": "node server.js"
   },
   "engines": {
     "node": ">=18.0.0"

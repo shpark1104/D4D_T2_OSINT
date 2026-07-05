@@ -19,6 +19,26 @@ function sendJson(res, status, data) {
 }
 
 function readJson(req) {
+  if (req.body !== undefined && req.body !== null) {
+    if (typeof req.body === "string") {
+      try {
+        return Promise.resolve(req.body ? JSON.parse(req.body) : {});
+      } catch {
+        return Promise.reject(Object.assign(new Error("Invalid JSON body"), { status: 400 }));
+      }
+    }
+    if (Buffer.isBuffer(req.body)) {
+      try {
+        return Promise.resolve(req.body.length ? JSON.parse(req.body.toString("utf8")) : {});
+      } catch {
+        return Promise.reject(Object.assign(new Error("Invalid JSON body"), { status: 400 }));
+      }
+    }
+    if (typeof req.body === "object") {
+      return Promise.resolve(req.body);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const chunks = [];
     req.on("data", (chunk) => chunks.push(chunk));
@@ -63,9 +83,8 @@ function inferIocType(value) {
 
 // Runs regex + LLM IOC extraction over new text/files and merges into the
 // session's running IOC set (M2). StealthMole is deliberately NOT queried
-// here - the analyst drags specific IOC chips into the query tray and hits
-// "StealthMole 조회 실행" (or clicks/drags a single one) to control M3 queries
-// instead of firing every extracted IOC at once.
+// here - the analyst clicks or drags one IOC into the search field and runs a
+// single lookup to control M3 queries instead of firing every extracted IOC at once.
 async function runIntakePipeline(session, { text, files }) {
   const sources = [{ name: "message", content: text || "" }, ...files];
 
@@ -192,9 +211,14 @@ async function handleApi(req, res, pathname, query) {
         sessionsStore.markQueried(session, ioc);
         let result;
         try {
-          result = stealthmoleClient.ASYNC_MODULES.has(body.module)
-            ? await stealthmoleClient.asyncSearchAll("keyword", value, {})
-            : await stealthmoleClient.syncSearch(body.module, value, {});
+          if (stealthmoleClient.ASYNC_MODULES.has(body.module)) {
+            const route = stealthmoleClient.asyncRouteFor(ioc.type, body.module);
+            const indicator = route?.indicator || "keyword";
+            const queryText = route?.query ? route.query(value) : value;
+            result = await stealthmoleClient.asyncSearchAll(indicator, queryText, {});
+          } else {
+            result = await stealthmoleClient.syncSearch(body.module, value, {});
+          }
         } catch (error) {
           result = {
             module: body.module,
@@ -297,7 +321,7 @@ function serveStatic(res, pathname) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
+async function requestHandler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (url.pathname.startsWith("/api/")) {
@@ -308,11 +332,28 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     sendJson(res, error.status || 500, { detail: error.message });
   }
-});
+}
 
-server.listen(port, host, () => {
-  console.log(`D4D CTI base running at http://${host}:${port}`);
-  console.log(`Local browser URL: http://localhost:${port}`);
-  console.log(`StealthMole mode: ${stealthmole.mockMode ? "mock" : "live"}`);
-  console.log(`LLM (OpenAI) mode: ${llm.enabled ? "enabled" : "disabled (no OPENAI_API_KEY)"}`);
-});
+const server = http.createServer(requestHandler);
+
+function startServer() {
+  if (server.listening) return server;
+  server.listen(port, host, () => {
+    console.log(`D4D CTI base running at http://${host}:${port}`);
+    console.log(`Local browser URL: http://localhost:${port}`);
+    console.log(`StealthMole mode: ${stealthmole.mockMode ? "mock" : "live"}`);
+    console.log(`LLM (OpenAI) mode: ${llm.enabled ? "enabled" : "disabled (no OPENAI_API_KEY)"}`);
+  });
+  return server;
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  handleApi,
+  requestHandler,
+  server,
+  startServer
+};

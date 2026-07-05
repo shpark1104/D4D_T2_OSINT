@@ -129,12 +129,32 @@ p {
   margin-bottom: 14px;
 }
 
+.brand-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  position: relative;
+  width: fit-content;
+  padding-right: 54px;
+}
+
 .brand h1 {
-  margin-bottom: 4px;
+  margin: 0;
   font-size: 22px;
 }
 
+.brand-logo {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: auto;
+  height: 44px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
 .brand p {
+  margin-top: 4px;
   margin-bottom: 0;
   font-size: 12px;
 }
@@ -259,7 +279,7 @@ p {
 }
 
 .watch-list.muted,
-.stage-tray.muted,
+.single-search-target.muted,
 .results-list.muted,
 .relationship-list.muted {
   display: flex;
@@ -536,11 +556,11 @@ p {
   margin-top: 14px;
 }
 
-.queue-block {
+.single-search-block {
   margin-top: 14px;
 }
 
-.queue-head {
+.single-search-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -548,37 +568,37 @@ p {
   margin-bottom: 6px;
 }
 
-.queue-label {
+.single-search-label {
   margin-bottom: 0;
   color: var(--muted);
   font-size: 12px;
 }
 
-.queue-help {
-  margin-top: 6px;
-  font-size: 11px;
-}
-
-.stage-tray {
+.single-search-target {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 7px;
   min-height: 54px;
   padding: 9px;
+  overflow: hidden;
   border: 1px dashed var(--line);
   border-radius: 8px;
 }
 
-.queue-chip {
-  max-width: 100%;
-  padding: 5px 8px;
+.single-search-target strong,
+.single-search-target span {
   overflow: hidden;
-  color: var(--accent);
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: rgba(49, 246, 163, 0.1);
-  border: 1px solid currentColor;
-  border-radius: 999px;
+}
+
+.single-search-target strong {
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.single-search-target span {
+  min-width: 0;
 }
 
 .results-panel {
@@ -937,63 +957,63 @@ p {
 
 .hl-ioc.ioc-ipv4,
 .watch-item.ioc-ipv4,
-.queue-chip.ioc-ipv4 {
+.single-search-target.ioc-ipv4 {
   color: var(--ioc-ipv4);
   background: rgba(105, 199, 255, 0.13);
 }
 
 .hl-ioc.ioc-domain,
 .watch-item.ioc-domain,
-.queue-chip.ioc-domain {
+.single-search-target.ioc-domain {
   color: var(--ioc-domain);
   background: rgba(49, 246, 163, 0.13);
 }
 
 .hl-ioc.ioc-url,
 .watch-item.ioc-url,
-.queue-chip.ioc-url {
+.single-search-target.ioc-url {
   color: var(--ioc-url);
   background: rgba(167, 139, 250, 0.13);
 }
 
 .hl-ioc.ioc-email,
 .watch-item.ioc-email,
-.queue-chip.ioc-email {
+.single-search-target.ioc-email {
   color: var(--ioc-email);
   background: rgba(103, 232, 249, 0.13);
 }
 
 .hl-ioc.ioc-hash,
 .watch-item.ioc-hash,
-.queue-chip.ioc-hash {
+.single-search-target.ioc-hash {
   color: var(--ioc-hash);
   background: rgba(244, 114, 182, 0.13);
 }
 
 .hl-ioc.ioc-wallet,
 .watch-item.ioc-wallet,
-.queue-chip.ioc-wallet {
+.single-search-target.ioc-wallet {
   color: var(--ioc-wallet);
   background: rgba(251, 191, 36, 0.14);
 }
 
 .hl-ioc.ioc-telegram,
 .watch-item.ioc-telegram,
-.queue-chip.ioc-telegram {
+.single-search-target.ioc-telegram {
   color: var(--ioc-telegram);
   background: rgba(34, 211, 238, 0.13);
 }
 
 .hl-ioc.ioc-cve,
 .watch-item.ioc-cve,
-.queue-chip.ioc-cve {
+.single-search-target.ioc-cve {
   color: var(--ioc-cve);
   background: rgba(251, 113, 133, 0.13);
 }
 
 .hl-ioc.ioc-generic,
 .watch-item.ioc-generic,
-.queue-chip.ioc-generic {
+.single-search-target.ioc-generic {
   color: var(--ioc-generic);
   background: rgba(182, 200, 192, 0.12);
 }

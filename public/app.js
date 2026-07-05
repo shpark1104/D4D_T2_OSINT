@@ -26,7 +26,7 @@ const state = {
   documents: { allData: [], data: [], totalCount: 0, cursor: null, moduleCounts: {} },
   resultsMessage: "조회 결과 없음",
   interestIocs: [],
-  stagedIocs: [],
+  searchIoc: null,
   interestNodes: [],
   currentDoc: null,
   currentView: null,
@@ -75,9 +75,16 @@ async function api(path, options = {}) {
     ...fetchOptions,
     headers: { "Content-Type": "application/json", ...(headers || {}) }
   });
-  const data = await response.json().catch(() => ({}));
+  const rawText = await response.text();
+  let data = {};
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    const plain = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    data = { detail: plain ? `${response.status} ${response.statusText}: ${shortText(plain, 180)}` : "" };
+  }
   if (!response.ok) {
-    const error = new Error(data.detail || "Request failed");
+    const error = new Error(data.detail || `${response.status} ${response.statusText || "Request failed"}`);
     error.status = response.status;
     error.detail = data.detail;
     throw error;
@@ -164,7 +171,7 @@ function makeSearchPanelDropTarget(element) {
       addFiles(files);
       return;
     }
-    stageIoc(ioc);
+    setSearchIoc(ioc);
   });
 }
 
@@ -214,9 +221,11 @@ function addInterestIoc(ioc) {
 
 function removeInterestIoc(ioc) {
   state.interestIocs = state.interestIocs.filter((item) => iocKey(item) !== iocKey(ioc));
-  state.stagedIocs = state.stagedIocs.filter((item) => iocKey(item) !== iocKey(ioc));
+  if (state.searchIoc && iocKey(state.searchIoc) === iocKey(ioc)) {
+    state.searchIoc = null;
+  }
   renderInterestIocs();
-  renderStageTray();
+  renderSearchTarget();
 }
 
 async function copyText(value) {
@@ -269,7 +278,14 @@ function renderInterestIocs() {
       </div>
     `;
     row.addEventListener("dragstart", (event) => setDrag(event, DRAG_IOC, ioc));
-    row.querySelector(".remove-ioc-btn").addEventListener("click", () => removeInterestIoc(ioc));
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      setSearchIoc(ioc);
+    });
+    row.querySelector(".remove-ioc-btn").addEventListener("click", (event) => {
+      event.stopPropagation();
+      removeInterestIoc(ioc);
+    });
     row.querySelector(".copy-ioc-btn").addEventListener("click", (event) => {
       event.stopPropagation();
       copyText(ioc.value).catch((error) => alert(`복사 실패: ${error.message}`));
@@ -480,66 +496,53 @@ async function analyzeSources() {
   }
 }
 
-// --- Query queue ---
+// --- Single search target ---
 
-function stageIoc(ioc) {
+function setSearchIoc(ioc) {
   if (!ioc || !ioc.value) return;
-  if (!state.stagedIocs.some((item) => iocKey(item) === iocKey(ioc))) {
-    state.stagedIocs.push({ type: ioc.type || "keyword", value: String(ioc.value).trim() });
+  const normalized = { type: ioc.type || "keyword", value: String(ioc.value).trim() };
+  if (!normalized.value) return;
+  state.searchIoc = normalized;
+  $("#query").value = normalized.value;
+  $("#service").value = "";
+  renderSearchTarget();
+}
+
+function clearSearchIocIfInputChanged() {
+  const query = $("#query").value.trim();
+  if (state.searchIoc && query !== state.searchIoc.value) {
+    state.searchIoc = null;
+    renderSearchTarget();
   }
-  renderStageTray();
 }
 
-function removeStagedIoc(ioc) {
-  state.stagedIocs = state.stagedIocs.filter((item) => iocKey(item) !== iocKey(ioc));
-  renderStageTray();
-}
-
-function renderStageTray() {
-  const tray = $("#stageTray");
-  const runBtn = $("#runQueryBtn");
-  if (!state.stagedIocs.length) {
-    tray.className = "stage-tray drop-target muted";
-    tray.textContent = "관심 IOC를 여기로 드래그";
-    runBtn.disabled = true;
+function renderSearchTarget() {
+  const target = $("#singleSearchTarget");
+  if (!target) return;
+  if (!state.searchIoc) {
+    target.className = "single-search-target drop-target muted";
+    target.textContent = "관심 IOC를 드롭하거나 클릭하면 검색창에 입력됩니다.";
     return;
   }
-
-  tray.className = "stage-tray drop-target";
-  tray.innerHTML = "";
-  for (const ioc of state.stagedIocs) {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = `queue-chip ${chipClass(ioc.type)}`;
-    chip.textContent = `${ioc.type}: ${ioc.value} x`;
-    chip.title = "대기열에서 제거";
-    chip.addEventListener("click", () => removeStagedIoc(ioc));
-    tray.appendChild(chip);
-  }
-  runBtn.disabled = false;
-}
-
-async function runStagedQuery() {
-  if (!state.stagedIocs.length) return;
-  const batch = [...state.stagedIocs];
-  $("#runQueryBtn").disabled = true;
-  $("#runQueryBtn").textContent = "조회 중...";
-  try {
-    await submitQuery({ iocs: batch });
-    state.stagedIocs = [];
-    renderStageTray();
-  } catch (error) {
-    alert(`StealthMole 조회 실패: ${error.message}`);
-  } finally {
-    $("#runQueryBtn").textContent = "조회 실행";
-    $("#runQueryBtn").disabled = !state.stagedIocs.length;
-  }
+  target.className = `single-search-target drop-target ${chipClass(state.searchIoc.type)}`;
+  target.innerHTML = `
+    <strong>${escapeHtml(state.searchIoc.type)}</strong>
+    <span>${escapeHtml(state.searchIoc.value)}</span>
+  `;
 }
 
 async function runKeywordSearch() {
   const query = $("#query").value.trim();
   const module = $("#service").value;
   if (!query) return;
+  if (!module && state.searchIoc && query === state.searchIoc.value) {
+    await submitQuery({ iocs: [state.searchIoc] });
+    return;
+  }
+  if (state.searchIoc && query !== state.searchIoc.value) {
+    state.searchIoc = null;
+    renderSearchTarget();
+  }
   await submitQuery(module ? { module, query } : { query });
 }
 
@@ -1163,10 +1166,15 @@ function boot() {
   $("#files").addEventListener("change", (event) => addFiles(event.target.files));
   $("#analyze").addEventListener("click", analyzeSources);
 
-  makeDropTarget($("#stageTray"), DRAG_IOC, stageIoc);
+  makeDropTarget($("#singleSearchTarget"), DRAG_IOC, setSearchIoc);
   makeDropTarget($("#interestIocList"), DRAG_IOC, addInterestIoc);
   makeDropTarget($("#interestNodeList"), DRAG_NODE, addInterestNode);
-  $("#runQueryBtn").addEventListener("click", runStagedQuery);
+  $("#query").addEventListener("input", clearSearchIocIfInputChanged);
+  $("#service").addEventListener("change", () => {
+    if (!state.searchIoc) return;
+    state.searchIoc = null;
+    renderSearchTarget();
+  });
 
   $("#keywordForm").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1210,6 +1218,8 @@ function boot() {
     menu.style.top = `${event.pageY + 10}px`;
     $("#selectionSearchBtn").onclick = () => {
       $("#query").value = text;
+      state.searchIoc = null;
+      renderSearchTarget();
       hideSelectionMenu();
     };
   });
@@ -1234,7 +1244,7 @@ async function init() {
   renderPendingFiles();
   renderInterestIocs();
   renderInterestNodes();
-  renderStageTray();
+  renderSearchTarget();
   renderViewer();
   await refreshQuotas();
   clearSearchResults();
