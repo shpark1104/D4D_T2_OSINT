@@ -66,6 +66,24 @@ const TYPE_PATTERNS = [
 
 const TRAILING_PUNCTUATION = /[),.;:\]}'"]+$/;
 
+// Common file extensions that the domain regex would otherwise mistake for a
+// TLD (e.g. "human2.aspx", "moveitisapi.dll" from a real incident report).
+const NON_TLD_EXTENSIONS = new Set([
+  "dll", "exe", "sys", "bin", "dat", "bak", "tmp", "old", "log", "lock",
+  "aspx", "asp", "php", "jsp", "js", "ts", "jsx", "tsx", "py", "rb", "go",
+  "java", "class", "jar", "war", "c", "cpp", "h", "cs", "sh", "bat", "ps1",
+  "vbs", "pl", "sql", "csv", "tsv", "txt", "md", "doc", "docx", "xls", "xlsx",
+  "ppt", "pptx", "pdf", "zip", "rar", "7z", "tar", "gz", "bz2", "iso", "dmg",
+  "msi", "apk", "ini", "cfg", "conf", "yml", "yaml", "json", "xml", "html",
+  "htm", "css", "scss", "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico",
+  "mp3", "mp4", "wav", "avi", "mov", "mkv", "flv", "env", "git", "config"
+]);
+
+function isFileExtensionNotDomain(value) {
+  const suffix = value.slice(value.lastIndexOf(".") + 1).toLowerCase();
+  return NON_TLD_EXTENSIONS.has(suffix);
+}
+
 function overlaps(a, b) {
   return a.start < b.end && b.start < a.end;
 }
@@ -96,6 +114,7 @@ function extractIocsFromText(text, sourceFile = "message") {
         raw = trimmed;
       }
       if (!raw) continue;
+      if (type === "domain" && isFileExtensionNotDomain(raw)) continue;
 
       const span = { start: matchStart, end: matchEnd };
       if (claimed.some((range) => overlaps(range, span))) continue;
