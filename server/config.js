@@ -54,7 +54,7 @@ module.exports = {
     provider: "openai",
     apiKey: openaiKey,
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-    timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 8000),
+    timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 15000),
     enabled: Boolean(openaiKey)
   },
   limits: {

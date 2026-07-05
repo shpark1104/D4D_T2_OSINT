@@ -86,21 +86,18 @@ function inferIocType(value) {
 // here - the analyst clicks or drags one IOC into the search field and runs a
 // single lookup to control M3 queries instead of firing every extracted IOC at once.
 async function runIntakePipeline(session, { text, files }) {
-  const sources = [{ name: "message", content: text || "" }, ...files];
+  const sources = [{ name: "message", content: text || "" }, ...files].filter((source) => source.content);
 
-  const regexIocs = [];
-  const llmIocs = [];
-  const llmEntities = [];
+  const regexIocs = sources.flatMap((source) => extractIocsFromText(source.content, source.name));
 
-  for (const source of sources) {
-    if (!source.content) continue;
-    regexIocs.push(...extractIocsFromText(source.content, source.name));
-    if (llm.enabled) {
-      const { iocs, entities } = await extractIocsWithLlm(source.content, source.name);
-      llmIocs.push(...iocs);
-      llmEntities.push(...entities);
-    }
-  }
+  // Run each source's LLM extraction concurrently (instead of one-by-one)
+  // so a message plus several files doesn't add up to N x latency and risk
+  // a serverless function timeout.
+  const llmResults = llm.enabled
+    ? await Promise.all(sources.map((source) => extractIocsWithLlm(source.content, source.name)))
+    : [];
+  const llmIocs = llmResults.flatMap((result) => result.iocs);
+  const llmEntities = llmResults.flatMap((result) => result.entities);
 
   sessionsStore.setIocs(session, mergeIocs(session.iocs, regexIocs, llmIocs));
   sessionsStore.addEntities(session, llmEntities);

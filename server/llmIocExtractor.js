@@ -2,6 +2,12 @@ const { callLlm, extractJson, isEnabled } = require("./llmClient");
 
 const CHUNK_SIZE = 4000;
 const CHUNK_OVERLAP = 200;
+// Chunks are sent to OpenAI in parallel (not sequentially) so a long paste
+// doesn't add up to N x per-chunk latency and blow past the serverless
+// function time limit. Cap the chunk count so an extremely long paste can't
+// fire off unbounded concurrent requests; regex extraction still covers the
+// full text regardless of this cap.
+const MAX_LLM_CHUNKS = 6;
 
 const KNOWN_IOC_TYPES = new Set([
   "ipv4",
@@ -99,27 +105,30 @@ async function extractIocsWithLlm(text, sourceFile = "message") {
     return { iocs: [], entities: [] };
   }
 
-  const chunks = chunkText(text);
+  const chunks = chunkText(text).slice(0, MAX_LLM_CHUNKS);
   const iocs = [];
   const entities = [];
   const seenIocKeys = new Set();
   const seenEntityKeys = new Set();
 
-  for (const chunk of chunks) {
-    let items;
-    try {
-      const { text: responseText } = await callLlm({
-        system: SYSTEM_PROMPT,
-        prompt: chunk.text,
-        maxTokens: 2000
-      });
-      items = extractJson(responseText);
-    } catch (error) {
-      console.error("LLM IOC extraction failed for a chunk:", error.message);
-      continue;
-    }
-    if (!Array.isArray(items)) continue;
+  const chunkResults = await Promise.all(
+    chunks.map(async (chunk) => {
+      try {
+        const { text: responseText } = await callLlm({
+          system: SYSTEM_PROMPT,
+          prompt: chunk.text,
+          maxTokens: 2000
+        });
+        const items = extractJson(responseText);
+        return { chunk, items: Array.isArray(items) ? items : [] };
+      } catch (error) {
+        console.error("LLM IOC extraction failed for a chunk:", error.message);
+        return { chunk, items: [] };
+      }
+    })
+  );
 
+  for (const { chunk, items } of chunkResults) {
     for (const item of items) {
       if (!item || typeof item.value !== "string" || !item.value.trim()) continue;
       const value = item.value.trim();
